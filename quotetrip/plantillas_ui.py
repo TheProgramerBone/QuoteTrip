@@ -107,15 +107,29 @@ _CAMPOS_CUENTA_PREVIEW = (
 # ----------------------------------------------------------------------
 # Entrada
 # ----------------------------------------------------------------------
+def esta_editando_plantilla() -> bool:
+    """`True` mientras el editor de plantillas está abierto — `app.py` lo
+    usa para decidir si mostrar el editor a pantalla completa (sin la
+    barra de pestañas) en vez de las pestañas normales."""
+    return bool(st.session_state.get("plantillas_editando_id"))
+
+
 def render_tab_plantillas(cuenta: dict):
+    """Pestaña "Plantillas": solo la biblioteca. El editor (cuando
+    `esta_editando_plantilla()` es `True`) lo renderiza `app.py` a pantalla
+    completa vía `render_editor_plantilla`, no aquí — así al editar no
+    convive con Cotización/Historial/Ayuda detrás de una barra de
+    pestañas, se siente como abrir una pantalla propia."""
     st.markdown("## 🎨 Plantillas")
     if st.session_state.pop("plantillas_guardado_ok", False):
         st.success("Plantilla guardada.")
+    _render_biblioteca(cuenta)
 
-    if st.session_state.get("plantillas_editando_id"):
-        _render_editor(cuenta)
-    else:
-        _render_biblioteca(cuenta)
+
+def render_editor_plantilla(cuenta: dict):
+    """Punto de entrada público del editor a pantalla completa (ver
+    `esta_editando_plantilla`)."""
+    _render_editor(cuenta)
 
 
 # ----------------------------------------------------------------------
@@ -650,11 +664,15 @@ def _render_editor(cuenta: dict):
     id_ = st.session_state["plantillas_editando_id"]
     fila = obtener_plantilla(id_)
     if not fila:
+        st.markdown("## ✏️ Editor de plantilla")
         st.warning("Esta plantilla ya no existe (puede que se haya eliminado en otra pestaña).")
-        st.button("← Volver a la biblioteca", on_click=_cerrar_editor)
+        st.button("← Volver a Plantillas", on_click=_cerrar_editor)
         return
     base_id = fila["base_id"]
     p = f"pe_{id_}_"
+
+    st.caption("🎨 Plantillas")
+    st.markdown(f"## ✏️ Editando: {st.session_state.get(p + 'nombre') or fila['nombre']}")
 
     col_izq, col_der = st.columns([3, 2])
 
@@ -825,7 +843,7 @@ def _render_editor(cuenta: dict):
                 args=(id_, base_id),
             )
         with c_volver:
-            st.button("← Volver a la biblioteca", use_container_width=True, on_click=_cerrar_editor)
+            st.button("← Volver a Plantillas", use_container_width=True, on_click=_cerrar_editor)
 
     with col_der:
         st.markdown("#### Vista previa")

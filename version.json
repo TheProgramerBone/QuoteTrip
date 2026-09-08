@@ -1,7 +1,7 @@
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
-  "sha256": "9a1977e3a09d8249d9a4f2643594931695cc63b876648641b9f49311ac4bfd5a",
-  "notas": "Editor de plantillas: elementos libres (texto, imágenes y formas) que puedes posicionar, redimensionar, rotar y ordenar en capas dentro de la página — ideal para sellos, franjas de color o mensajes promocionales en tu PDF."
+  "sha256": "",
+  "notas": "El editor de plantillas ahora se abre a pantalla completa en vez de quedar enterrado dentro de la pestaña Plantillas — al pulsar «Editar» se oculta el resto de la app y solo queda el editor, con un único camino de vuelta."
 }

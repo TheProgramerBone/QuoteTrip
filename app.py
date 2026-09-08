@@ -29,7 +29,11 @@ from quotetrip.config import (
 )
 from quotetrip.cotizacion_ui import render_tab_cotizacion, render_tab_historial
 from quotetrip.db import init_db, obtener_cuenta
-from quotetrip.plantillas_ui import render_tab_plantillas
+from quotetrip.plantillas_ui import (
+    esta_editando_plantilla,
+    render_editor_plantilla,
+    render_tab_plantillas,
+)
 
 st.set_page_config(
     page_title=f"{PRODUCTO_NOMBRE} · Cotizaciones",
@@ -219,6 +223,18 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# ----------------------------------------------------------------------
+# EDITOR DE PLANTILLAS: pantalla completa, sin la barra de pestañas detrás
+# ----------------------------------------------------------------------
+# Mientras se edita una plantilla, ocultamos por completo
+# Cotización/Historial/Plantillas/Ayuda en vez de dejar el editor enterrado
+# dentro de la pestaña "Plantillas" — así abrir "Editar" se siente como
+# entrar a una pantalla propia, con su único camino de vuelta ("← Volver a
+# Plantillas"), no como un panel más conviviendo con otras tres pestañas.
+if esta_editando_plantilla():
+    render_editor_plantilla(cuenta)
+    st.stop()
 
 st.markdown("## Generador de Cotizaciones")
 

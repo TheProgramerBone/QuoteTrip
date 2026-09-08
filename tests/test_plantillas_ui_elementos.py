@@ -315,6 +315,50 @@ def test_mover_seleccion_desplaza_todos_por_igual():
     assert st.session_state[p + f"el_{b}_y"] == 4.0
 
 
+def test_texto_dinamico_guarda_binding_solo_en_modo_dinamico():
+    _limpiar_session_state()
+    id_ = "tpl_binding"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    (eid,) = st.session_state[p + "elementos_orden"]
+    ep = p + f"el_{eid}_"
+    st.session_state[ep + "modo_contenido"] = "dinamico"
+    st.session_state[ep + "binding"] = "cliente.nombre"
+    st.session_state[ep + "texto"] = "esto no debería guardarse"
+
+    definicion = pu._construir_definicion_desde_widgets(id_, None)
+    op = definicion.elementos[0].opciones
+    assert op["binding"] == "cliente.nombre"
+
+    # Si se vuelve a "libre", el binding no debe sobrevivir en el guardado.
+    st.session_state[ep + "modo_contenido"] = "libre"
+    definicion2 = pu._construir_definicion_desde_widgets(id_, None)
+    assert definicion2.elementos[0].opciones["binding"] is None
+    assert definicion2.elementos[0].opciones["texto"] == "esto no debería guardarse"
+
+
+def test_reabrir_editor_con_binding_reseed_modo_dinamico():
+    _limpiar_session_state()
+    id_ = "tpl_binding2"
+    base = obtener_preset("clasica")
+    pu._seed_editor_state(id_, base)
+    pu._agregar_elemento(id_, "texto")
+    p = f"pe_{id_}_"
+    (eid,) = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{eid}_modo_contenido"] = "dinamico"
+    st.session_state[p + f"el_{eid}_binding"] = "agencia.nit"
+    guardada = pu._construir_definicion_desde_widgets(id_, base.id)
+
+    _limpiar_session_state()
+    recargada = TemplateDefinition.from_json(guardada.to_json())
+    pu._seed_editor_state(id_, recargada)
+    (eid2,) = st.session_state[p + "elementos_orden"]
+    assert st.session_state[p + f"el_{eid2}_modo_contenido"] == "dinamico"
+    assert st.session_state[p + f"el_{eid2}_binding"] == "agencia.nit"
+
+
 def test_seed_desde_definicion_existente_recupera_los_elementos():
     _limpiar_session_state()
     id_ = "tpl_test3"

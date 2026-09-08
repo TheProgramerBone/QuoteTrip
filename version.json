@@ -1,7 +1,7 @@
 {
-  "version": "1.4.4",
+  "version": "1.4.5",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: agrupa varios elementos libres para tratarlos como una unidad (bloquear/duplicar/mover juntos con un desplazamiento en X/Y), o duplica y desagrupa cuando lo necesites."
+  "notas": "Editor de plantillas: los elementos de texto libre ahora pueden mostrar un dato real de la cotización (nombre del cliente, NIT, fecha...) en vez de texto fijo — se actualiza solo en cada cotización nueva, sin tocar la plantilla."
 }

@@ -209,6 +209,23 @@ def test_validar_limpia_grupo_id_de_tipo_invalido():
     assert plantilla.elementos[0].grupo_id is None
 
 
+def test_validar_limpia_binding_desconocido():
+    plantilla = _plantilla_minima(
+        elementos=[ElementoLibre(tipo="texto", opciones={"binding": "algo.inventado"})]
+    )
+    avisos = validar_plantilla(plantilla)
+    assert plantilla.elementos[0].opciones["binding"] is None
+    assert any("dinámico" in a.lower() for a in avisos)
+
+
+def test_validar_conserva_binding_valido():
+    plantilla = _plantilla_minima(
+        elementos=[ElementoLibre(tipo="texto", opciones={"binding": "cliente.nombre"})]
+    )
+    validar_plantilla(plantilla)
+    assert plantilla.elementos[0].opciones["binding"] == "cliente.nombre"
+
+
 def test_validar_avisa_elemento_fuera_de_pagina():
     plantilla = _plantilla_minima(
         elementos=[ElementoLibre(tipo="texto", x_cm=500.0, y_cm=500.0, ancho_cm=2.0, alto_cm=2.0)]

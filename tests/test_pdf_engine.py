@@ -134,6 +134,32 @@ def test_elemento_imagen_con_datos_corruptos_se_omite(glob_de_prueba, opcion_de_
     assert pdf_bytes[:5] == b"%PDF-"
 
 
+def test_elemento_texto_con_binding_resuelve_dato_real(glob_de_prueba, opcion_de_prueba):
+    """Un elemento de texto con `binding` dibuja el dato real de `glob`
+    («Cliente de Prueba» en el fixture), nunca el texto literal guardado
+    (que aquí ni siquiera se puso, para dejar claro que no se usa)."""
+    plantilla = obtener_preset("clasica")
+    plantilla.elementos = [
+        ElementoLibre(tipo="texto", opciones={"binding": "cliente.nombre"}),
+    ]
+    validar_plantilla(plantilla)
+    pdf_bytes = renderizar_plantilla(plantilla, glob_de_prueba, [opcion_de_prueba()])
+    assert "Cliente de Prueba" in _texto(pdf_bytes)
+
+
+def test_elemento_texto_con_binding_desconocido_no_rompe(glob_de_prueba, opcion_de_prueba):
+    """Un binding que `validar_plantilla` no limpió (p.ej. un JSON escrito
+    a mano) simplemente no resuelve — no debe romper el PDF ni mostrar
+    nada."""
+    plantilla = obtener_preset("clasica")
+    plantilla.elementos = [
+        ElementoLibre(tipo="texto", opciones={"binding": "algo.inventado", "texto": "Fallback"}),
+    ]
+    pdf_bytes = renderizar_plantilla(plantilla, glob_de_prueba, [opcion_de_prueba()])
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert "Fallback" not in _texto(pdf_bytes)  # binding manda, no cae al texto literal
+
+
 def test_elemento_oculto_no_se_dibuja(glob_de_prueba, opcion_de_prueba):
     plantilla = obtener_preset("clasica")
     plantilla.elementos = [

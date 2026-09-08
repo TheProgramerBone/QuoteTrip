@@ -19,6 +19,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .bindings import CAMPOS_DINAMICOS
+
 SCHEMA_VERSION = 4
 
 # ----------------------------------------------------------------------
@@ -195,8 +197,14 @@ class ElementoLibre:
     `opciones` guarda los campos específicos de `tipo` (mismo patrón que
     `SeccionConfig.opciones`, para no inflar esta dataclase con campos que
     no aplican a los otros tipos):
-      - "texto": {texto, fuente_id, tamano_pt, peso, color, alineacion,
-        interlineado}
+      - "texto": {texto, binding, fuente_id, tamano_pt, peso, color,
+        alineacion, interlineado} — `binding` (clave del catálogo
+        controlado en `pdf/models/bindings.py`, o `None`) tiene prioridad
+        sobre `texto`: si está presente y resuelve, el renderer dibuja el
+        dato real de la cotización en su lugar (nunca `eval`, ver ese
+        módulo); si no resuelve (dato ausente), se dibuja vacío, no el
+        `texto` literal — son mutuamente excluyentes por diseño del
+        editor (`plantillas_ui.py`), `texto` es el modo libre.
       - "imagen": {imagen_b64, ajuste} — se guarda la imagen ya codificada
         en base64 dentro del JSON (igual filosofía que el snapshot de la
         plantilla en cada cotización: autocontenido, nunca depende de un
@@ -510,6 +518,12 @@ def validar_plantilla(template: TemplateDefinition) -> list[str]:
                 op["color"] = None
             if op.get("fuente_id", FUENTE_POR_DEFECTO) not in FUENTES_CATALOGO:
                 op["fuente_id"] = FUENTE_POR_DEFECTO
+            if op.get("binding") is not None and op["binding"] not in CAMPOS_DINAMICOS:
+                avisos.append(
+                    f"Se ignoró un dato dinámico desconocido «{op['binding']}» en un elemento "
+                    "de texto; se dejó como texto libre."
+                )
+                op["binding"] = None
         elif el.tipo == "forma":
             if op.get("forma", "rectangulo") not in FORMAS_CATALOGO:
                 op["forma"] = "rectangulo"

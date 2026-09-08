@@ -79,7 +79,10 @@ def renderizar_plantilla(template, glob: dict, opciones: list) -> bytes:
             # Elementos libres primero (quedan de fondo), encabezado/pie
             # encima — ambos se pintan antes que el `story` de la
             # cotización, que ReportLab dibuja por su cuenta sobre esto.
-            dibujar_elementos_libres(canvas, template, doc.pagesize[1])
+            # `glob` es el mismo en todas las páginas (nivel documento, no
+            # por-opción) — ver el alcance deliberado documentado en
+            # `pdf/models/bindings.py`.
+            dibujar_elementos_libres(canvas, template, doc.pagesize[1], datos=glob)
             dibujar_encabezado_pie(canvas, doc)
 
         doc.build(story, onFirstPage=dibujar, onLaterPages=dibujar)

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Modelos de datos declarativos del sistema de plantillas PDF."""
 
+from .bindings import CAMPOS_DINAMICOS, etiqueta_campo, resolver_campo
 from .template import (
     AJUSTES_IMAGEN,
     ALINEACIONES,
@@ -38,6 +39,7 @@ from .template import (
 
 __all__ = [
     "AJUSTES_IMAGEN",
+    "CAMPOS_DINAMICOS",
     "ALINEACIONES",
     "ELEMENTO_TAMANO_MAX_CM",
     "ELEMENTO_TAMANO_MIN_CM",
@@ -67,6 +69,8 @@ __all__ = [
     "SeccionConfig",
     "TemaConfig",
     "TemplateDefinition",
+    "etiqueta_campo",
     "migrar_definicion",
+    "resolver_campo",
     "validar_plantilla",
 ]

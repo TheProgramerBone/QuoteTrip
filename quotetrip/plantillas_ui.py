@@ -27,6 +27,7 @@ from .db import (
 from .pdf.models import (
     AJUSTES_IMAGEN,
     ALINEACIONES,
+    CAMPOS_DINAMICOS,
     ELEMENTO_TAMANO_MAX_CM,
     ELEMENTO_TAMANO_MIN_CM,
     FORMAS_CATALOGO,
@@ -53,6 +54,7 @@ from .pdf.models import (
     SeccionConfig,
     TemaConfig,
     TemplateDefinition,
+    etiqueta_campo,
     validar_plantilla,
 )
 from .pdf.presets import PRESET_POR_DEFECTO, listar_presets, obtener_preset
@@ -706,6 +708,8 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
     st.session_state[ep + "opacidad"] = float(e.opacidad) if e else 1.0
     if tipo == "texto":
         st.session_state[ep + "texto"] = op.get("texto", "Texto")
+        st.session_state[ep + "binding"] = op.get("binding")
+        st.session_state[ep + "modo_contenido"] = "dinamico" if op.get("binding") else "libre"
         st.session_state[ep + "fuente"] = op.get("fuente_id", FUENTE_POR_DEFECTO)
         st.session_state[ep + "tam"] = float(op.get("tamano_pt", 10.5))
         st.session_state[ep + "peso"] = op.get("peso", "normal")
@@ -812,8 +816,16 @@ def _elemento_desde_widgets(p: str, eid: str) -> ElementoLibre | None:
         return None
     tipo = ss.get(ep + "tipo", "texto")
     if tipo == "texto":
+        # binding y texto libre son mutuamente excluyentes: solo se guarda
+        # el binding cuando el modo activo es "dinámico" (ver el
+        # selectbox "Contenido" en _render_elemento) — así un texto que
+        # antes tuvo un dato dinámico pero se pasó a "libre" no arrastra
+        # un binding fantasma.
         opciones = {
             "texto": ss.get(ep + "texto", ""),
+            "binding": ss.get(ep + "binding")
+            if ss.get(ep + "modo_contenido") == "dinamico"
+            else None,
             "fuente_id": ss.get(ep + "fuente", FUENTE_POR_DEFECTO),
             "tamano_pt": ss.get(ep + "tam", 10.5),
             "peso": ss.get(ep + "peso", "normal"),
@@ -904,8 +916,13 @@ def _etiqueta_capa(ep: str, tipo: str) -> str:
     ss = st.session_state
     icono = _ETIQUETAS_TIPO_ELEMENTO.get(tipo, tipo)
     if tipo == "texto":
-        texto = (ss.get(ep + "texto") or "").strip().replace("\n", " ")
-        detalle = f"«{texto[:28]}…»" if len(texto) > 28 else (f"«{texto}»" if texto else "(vacío)")
+        if ss.get(ep + "modo_contenido") == "dinamico" and ss.get(ep + "binding"):
+            detalle = f"🔗 {{{{{etiqueta_campo(ss[ep + 'binding'])}}}}}"
+        else:
+            texto = (ss.get(ep + "texto") or "").strip().replace("\n", " ")
+            detalle = (
+                f"«{texto[:28]}…»" if len(texto) > 28 else (f"«{texto}»" if texto else "(vacío)")
+            )
     elif tipo == "imagen":
         detalle = "con imagen" if ss.get(ep + "imagen_b64") else "sin imagen todavía"
     else:  # "forma"
@@ -1071,7 +1088,29 @@ def _render_elemento(id_: str, eid: str, indice: int):
             st.slider("Opacidad", 0.0, 1.0, key=ep + "opacidad", step=0.05)
 
         if tipo == "texto":
-            st.text_area("Texto", key=ep + "texto", height=80)
+            st.selectbox(
+                "Contenido",
+                options=["libre", "dinamico"],
+                format_func=lambda m: "Texto libre" if m == "libre" else "Dato de la cotización",
+                key=ep + "modo_contenido",
+                help="Un dato de la cotización se actualiza solo en cada nueva "
+                "cotización — nunca hay que editar la plantilla para cambiarlo.",
+            )
+            if st.session_state[ep + "modo_contenido"] == "dinamico":
+                if not st.session_state.get(ep + "binding"):
+                    st.session_state[ep + "binding"] = next(iter(CAMPOS_DINAMICOS))
+                st.selectbox(
+                    "Dato a insertar",
+                    options=list(CAMPOS_DINAMICOS.keys()),
+                    format_func=etiqueta_campo,
+                    key=ep + "binding",
+                )
+                st.caption(
+                    "La vista previa de la derecha ya muestra el dato real de "
+                    "una cotización de ejemplo."
+                )
+            else:
+                st.text_area("Texto", key=ep + "texto", height=80)
             t1, t2, t3 = st.columns(3)
             with t1:
                 st.selectbox(

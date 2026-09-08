@@ -23,6 +23,7 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Frame, Paragraph
 
+from ..models.bindings import resolver_campo
 from .fonts import nombre_fuente
 
 _ALINEACION_A_TA = {"izquierda": TA_LEFT, "centro": TA_CENTER, "derecha": TA_RIGHT}
@@ -38,7 +39,7 @@ def _rect_reportlab(el, alto_pagina_pt: float):
     return x, y, ancho, alto
 
 
-def _dibujar_texto(c, el, x, y, ancho, alto):
+def _dibujar_texto(c, el, x, y, ancho, alto, datos):
     op = el.opciones or {}
     fuente = nombre_fuente(op.get("fuente_id"), "bold" if op.get("peso") == "bold" else "normal")
     tamano = float(op.get("tamano_pt") or 10.5)
@@ -50,7 +51,13 @@ def _dibujar_texto(c, el, x, y, ancho, alto):
         alignment=_ALINEACION_A_TA.get(op.get("alineacion"), TA_LEFT),
         textColor=colors.HexColor(op.get("color") or "#000000"),
     )
-    texto = (op.get("texto") or "").strip()
+    # Un dato dinámico (binding) tiene prioridad sobre el texto libre — ver
+    # `ElementoLibre` en `pdf/models/template.py`. Si no resuelve (falta el
+    # dato, o `datos` no llegó — p.ej. una llamada vieja sin ese
+    # parámetro), se dibuja vacío, nunca el texto literal: mostrar
+    # "{{cliente.nombre}}" tal cual sería peor que no mostrar nada.
+    binding = op.get("binding")
+    texto = (resolver_campo(binding, datos) or "") if binding else (op.get("texto") or "").strip()
     if not texto:
         return
     frame = Frame(
@@ -71,7 +78,7 @@ def _dibujar_texto(c, el, x, y, ancho, alto):
     frame.addFromList([Paragraph(texto, estilo)], c)
 
 
-def _dibujar_forma(c, el, x, y, ancho, alto):
+def _dibujar_forma(c, el, x, y, ancho, alto, datos):
     op = el.opciones or {}
     forma = op.get("forma", "rectangulo")
     relleno = op.get("color_relleno")
@@ -99,7 +106,7 @@ def _dibujar_forma(c, el, x, y, ancho, alto):
         c.rect(x, y, ancho, alto, fill=hay_relleno, stroke=hay_borde)
 
 
-def _dibujar_imagen(c, el, x, y, ancho, alto):
+def _dibujar_imagen(c, el, x, y, ancho, alto, datos):
     op = el.opciones or {}
     datos_b64 = op.get("imagen_b64")
     if not datos_b64:
@@ -153,12 +160,17 @@ def _dibujar_imagen(c, el, x, y, ancho, alto):
 _DIBUJANTES = {"texto": _dibujar_texto, "forma": _dibujar_forma, "imagen": _dibujar_imagen}
 
 
-def dibujar_elementos_libres(c, template, alto_pagina_pt: float) -> None:
+def dibujar_elementos_libres(c, template, alto_pagina_pt: float, datos: dict | None = None) -> None:
     """Dibuja `template.elementos` visibles, en orden de `z_index`
     ascendente (los de mayor z_index quedan encima de los demás elementos
     libres — nunca encima del contenido de la cotización, ver docstring
     del módulo). Un elemento roto (imagen ilegible, color corrupto que
-    `validar_plantilla` no haya limpiado, etc.) se omite sin tumbar el PDF."""
+    `validar_plantilla` no haya limpiado, etc.) se omite sin tumbar el PDF.
+
+    `datos`: el `glob` de la cotización (ver `renderer.renderizar_plantilla`),
+    para resolver los `binding` de texto dinámico — ver `_dibujar_texto` y
+    `pdf/models/bindings.py`. `None` (el default) hace que cualquier
+    binding quede sin resolver (texto vacío), nunca una excepción."""
     visibles = [e for e in template.elementos if e.visible]
     for el in sorted(visibles, key=lambda e: e.z_index):
         dibujante = _DIBUJANTES.get(el.tipo)
@@ -177,7 +189,7 @@ def dibujar_elementos_libres(c, template, alto_pagina_pt: float) -> None:
                 c.translate(cx, cy)
                 c.rotate(el.rotacion_grados)
                 c.translate(-cx, -cy)
-            dibujante(c, el, x, y, ancho, alto)
+            dibujante(c, el, x, y, ancho, alto, datos)
         except Exception:
             pass
         finally:

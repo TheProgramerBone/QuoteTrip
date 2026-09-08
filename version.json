@@ -1,7 +1,7 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "El editor de plantillas ahora se abre a pantalla completa en vez de quedar enterrado dentro de la pestaña Plantillas — al pulsar «Editar» se oculta el resto de la app y solo queda el editor, con un único camino de vuelta."
+  "notas": "Editor de plantillas: panel «Capas» para los elementos libres — reordénalos con un click (traer al frente/enviar al fondo/subir/bajar un nivel), muéstralos u ocúltalos, y bloquéalos para protegerlos de moverse o borrarse sin querer."
 }

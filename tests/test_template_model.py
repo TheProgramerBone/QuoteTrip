@@ -168,6 +168,21 @@ def test_validar_corrige_forma_desconocida():
     assert avisos
 
 
+def test_round_trip_json_con_elemento_bloqueado():
+    original = _plantilla_minima(elementos=[ElementoLibre(tipo="texto", bloqueado=True)])
+    restaurada = TemplateDefinition.from_json(original.to_json())
+    assert restaurada.elementos[0].bloqueado is True
+
+
+def test_from_dict_sin_bloqueado_no_revienta():
+    """Un JSON guardado antes del panel de capas (sin la clave "bloqueado"
+    en el elemento) debe cargar con `bloqueado=False` por defecto."""
+    data = _plantilla_minima(elementos=[ElementoLibre(tipo="texto")]).to_dict()
+    del data["elementos"][0]["bloqueado"]
+    restaurada = TemplateDefinition.from_dict(data)
+    assert restaurada.elementos[0].bloqueado is False
+
+
 def test_validar_avisa_elemento_fuera_de_pagina():
     plantilla = _plantilla_minima(
         elementos=[ElementoLibre(tipo="texto", x_cm=500.0, y_cm=500.0, ancho_cm=2.0, alto_cm=2.0)]

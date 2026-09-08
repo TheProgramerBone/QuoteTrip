@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # ----------------------------------------------------------------------
 # Catálogos controlados — nunca se aceptan valores fuera de estas listas.
@@ -210,7 +210,19 @@ class ElementoLibre:
     elementos libres quedan siempre DETRÁS del contenido principal —
     `z_index` solo ordena entre elementos libres, no contra el contenido
     de la cotización. Sirven para fondos, marcas de agua, decoración o
-    bloques de texto propio, no para superponerse a los datos."""
+    bloques de texto propio, no para superponerse a los datos.
+
+    `z_index` (0 = más atrás) ya no se edita como campo numérico suelto en
+    el editor (Fase "Capas"): se deriva de la posición del elemento en el
+    panel de capas — `plantillas_ui._elementos_desde_widgets` la calcula
+    a partir del orden de la lista, no de un valor introducido a mano.
+    Sigue viviendo aquí porque el renderer (`engine/elementos_libres.py`)
+    necesita un número con el que ordenar, y JSONs antiguos ya lo traían.
+
+    `bloqueado` es una protección solo del editor (evita mover/redimensionar/
+    eliminar por accidente, p.ej. un logo o un fondo ya bien puesto) — el
+    renderer la ignora por completo, un elemento bloqueado se dibuja igual
+    que uno sin bloquear."""
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     tipo: str = "texto"
@@ -221,6 +233,7 @@ class ElementoLibre:
     rotacion_grados: float = 0.0
     z_index: int = 0
     visible: bool = True
+    bloqueado: bool = False
     opacidad: float = 1.0
     opciones: dict = field(default_factory=dict)
 
@@ -271,6 +284,7 @@ class TemplateDefinition:
                 rotacion_grados=e.get("rotacion_grados", 0.0),
                 z_index=e.get("z_index", 0),
                 visible=bool(e.get("visible", True)),
+                bloqueado=bool(e.get("bloqueado", False)),
                 opacidad=e.get("opacidad", 1.0),
                 opciones=dict(e.get("opciones") or {}),
             )
@@ -324,13 +338,17 @@ def migrar_definicion(data: dict) -> dict:
     de esquema actual. Cadena de migraciones incrementales: cada paso futuro
     sube en +1 `schema_version`. La v2 (elementos libres) no necesita un
     paso de migración real: un JSON v1 sin la clave "elementos" ya cae en
-    la lista vacía por defecto de `TemplateDefinition.from_dict()` — este
-    es un no-op que solo actualiza el número, pero deja listo el punto de
-    extensión para cuando el próximo cambio de esquema sí necesite tocar
-    los datos."""
+    la lista vacía por defecto de `TemplateDefinition.from_dict()`. La v3
+    (panel de capas + bloqueo) tampoco: un `ElementoLibre` v2 sin
+    "bloqueado" cae en `False` por defecto, y su `z_index` guardado se
+    interpreta tal cual como orden de capa (0 = más atrás) — mismo
+    significado de siempre, solo que ahora el editor lo deriva del panel
+    en vez de un campo numérico. Ambos son no-ops que solo actualizan el
+    número, pero dejan el punto de extensión listo para cuando un cambio
+    de esquema sí necesite tocar los datos."""
     # version = data.get("schema_version", 1)
-    # if version < 3:
-    #     data = _migrar_v2_a_v3(data)
+    # if version < 4:
+    #     data = _migrar_v3_a_v4(data)
     data["schema_version"] = SCHEMA_VERSION
     return data
 

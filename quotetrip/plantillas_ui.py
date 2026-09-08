@@ -330,6 +330,33 @@ def _mover_seccion(id_: str, tipo: str, direccion: int):
     st.session_state[clave] = orden
 
 
+def _mover_capa(id_: str, elemento_id: str, direccion: str):
+    """Reordena `elementos_orden`, que es a la vez el orden del panel
+    "Capas" Y el orden de dibujo (`z_index` se deriva de la posición, ver
+    `_elementos_desde_widgets`): índice 0 = más atrás, último índice = más
+    adelante (se dibuja al final, encima de los demás).
+
+    `direccion`: "frente" (al final de la lista), "fondo" (al principio),
+    "subir"/"bajar" (un nivel — intercambia con el vecino, hacia adelante/
+    atrás respectivamente)."""
+    clave = f"pe_{id_}_elementos_orden"
+    orden = st.session_state.get(clave, [])
+    if elemento_id not in orden:
+        return
+    i = orden.index(elemento_id)
+    if direccion == "frente" and i != len(orden) - 1:
+        orden.pop(i)
+        orden.append(elemento_id)
+    elif direccion == "fondo" and i != 0:
+        orden.pop(i)
+        orden.insert(0, elemento_id)
+    elif direccion == "subir" and i < len(orden) - 1:
+        orden[i + 1], orden[i] = orden[i], orden[i + 1]
+    elif direccion == "bajar" and i > 0:
+        orden[i - 1], orden[i] = orden[i], orden[i - 1]
+    st.session_state[clave] = orden
+
+
 # ----------------------------------------------------------------------
 # Editor
 # ----------------------------------------------------------------------
@@ -368,7 +395,12 @@ def _seed_editor_state(id_: str, definicion: TemplateDefinition):
     )
     st.session_state[p + "serv_layout"] = layout_servicios
 
-    st.session_state[p + "elementos_orden"] = [e.id for e in definicion.elementos]
+    # El panel "Capas" usa el propio orden de la lista como orden de dibujo
+    # (índice 0 = más atrás, último = más adelante) — al abrir el editor la
+    # sembramos ordenada por el `z_index` ya guardado, para que el panel
+    # refleje el apilado real de la plantilla tal como está hoy.
+    elementos_por_capa = sorted(definicion.elementos, key=lambda e: e.z_index)
+    st.session_state[p + "elementos_orden"] = [e.id for e in elementos_por_capa]
     for e in definicion.elementos:
         _seed_elemento(p, e.id, e.tipo, e)
 
@@ -384,8 +416,8 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
     st.session_state[ep + "ancho"] = float(e.ancho_cm) if e else 5.0
     st.session_state[ep + "alto"] = float(e.alto_cm) if e else 2.0
     st.session_state[ep + "rot"] = float(e.rotacion_grados) if e else 0.0
-    st.session_state[ep + "z"] = int(e.z_index) if e else 0
     st.session_state[ep + "vis"] = bool(e.visible) if e else True
+    st.session_state[ep + "bloqueado"] = bool(e.bloqueado) if e else False
     st.session_state[ep + "opacidad"] = float(e.opacidad) if e else 1.0
     if tipo == "texto":
         st.session_state[ep + "texto"] = op.get("texto", "Texto")
@@ -482,7 +514,7 @@ def _construir_definicion_desde_widgets(id_: str, base_id: str | None) -> Templa
 def _elementos_desde_widgets(p: str) -> list[ElementoLibre]:
     ss = st.session_state
     elementos = []
-    for eid in ss.get(p + "elementos_orden", []):
+    for i, eid in enumerate(ss.get(p + "elementos_orden", [])):
         ep = p + f"el_{eid}_"
         if ep + "tipo" not in ss:
             continue  # se eliminó en este mismo paso de edición
@@ -519,8 +551,12 @@ def _elementos_desde_widgets(p: str) -> list[ElementoLibre]:
                 ancho_cm=ss.get(ep + "ancho", 5.0),
                 alto_cm=ss.get(ep + "alto", 2.0),
                 rotacion_grados=ss.get(ep + "rot", 0.0),
-                z_index=int(ss.get(ep + "z", 0)),
+                # z_index ya no es un campo que el usuario edite a mano:
+                # es la posición del elemento en `elementos_orden`, que el
+                # panel "Capas" reordena (0 = más atrás, ver _mover_capa).
+                z_index=i,
                 visible=bool(ss.get(ep + "vis", True)),
+                bloqueado=bool(ss.get(ep + "bloqueado", False)),
                 opacidad=ss.get(ep + "opacidad", 1.0),
                 opciones=opciones,
             )
@@ -528,13 +564,111 @@ def _elementos_desde_widgets(p: str) -> list[ElementoLibre]:
     return elementos
 
 
+def _etiqueta_capa(ep: str, tipo: str) -> str:
+    """Descripción corta de un elemento para el panel "Capas" — el icono
+    de su tipo más un fragmento de su contenido, para poder distinguir
+    varios elementos del mismo tipo sin abrir cada uno."""
+    ss = st.session_state
+    icono = _ETIQUETAS_TIPO_ELEMENTO.get(tipo, tipo)
+    if tipo == "texto":
+        texto = (ss.get(ep + "texto") or "").strip().replace("\n", " ")
+        detalle = f"«{texto[:28]}…»" if len(texto) > 28 else (f"«{texto}»" if texto else "(vacío)")
+    elif tipo == "imagen":
+        detalle = "con imagen" if ss.get(ep + "imagen_b64") else "sin imagen todavía"
+    else:  # "forma"
+        forma = ss.get(ep + "forma", "rectangulo")
+        detalle = _ETIQUETAS_FORMA.get(forma, forma)
+    return f"{icono} — {detalle}"
+
+
+def _render_panel_capas(id_: str):
+    """Panel de gestión de capas: una fila por elemento libre, con la
+    de más adelante (se dibuja encima) arriba del todo — al revés de
+    `elementos_orden` (que guarda 0 = más atrás, ver `_mover_capa`).
+    Visibilidad y bloqueo se controlan aquí; posición/tamaño/estilo se
+    editan en "Elementos libres" más abajo."""
+    p = f"pe_{id_}_"
+    orden = st.session_state.get(p + "elementos_orden", [])
+    if not orden:
+        st.caption("Todavía no hay elementos libres — añade uno en «Elementos libres», abajo.")
+        return
+
+    total = len(orden)
+    for pos in range(total):
+        i = total - 1 - pos  # índice real en `orden`; pos=0 es la capa más adelante
+        eid = orden[i]
+        ep = p + f"el_{eid}_"
+        if ep + "tipo" not in st.session_state:
+            continue
+        tipo = st.session_state.get(ep + "tipo", "texto")
+        c_nombre, c_vis, c_lock, c_frente, c_sube, c_baja, c_fondo = st.columns(
+            [4, 1, 1, 1, 1, 1, 1]
+        )
+        with c_nombre:
+            st.caption(_etiqueta_capa(ep, tipo))
+        with c_vis:
+            st.checkbox("👁", key=ep + "vis", help="Visible")
+        with c_lock:
+            st.checkbox(
+                "🔒",
+                key=ep + "bloqueado",
+                help="Bloquear (protege de mover/redimensionar/eliminar)",
+            )
+        with c_frente:
+            st.button(
+                "⤒",
+                key=p + f"capa_frente_{eid}",
+                disabled=(i == total - 1),
+                help="Traer al frente",
+                use_container_width=True,
+                on_click=_mover_capa,
+                args=(id_, eid, "frente"),
+            )
+        with c_sube:
+            st.button(
+                "▲",
+                key=p + f"capa_sube_{eid}",
+                disabled=(i == total - 1),
+                help="Subir un nivel",
+                use_container_width=True,
+                on_click=_mover_capa,
+                args=(id_, eid, "subir"),
+            )
+        with c_baja:
+            st.button(
+                "▼",
+                key=p + f"capa_baja_{eid}",
+                disabled=(i == 0),
+                help="Bajar un nivel",
+                use_container_width=True,
+                on_click=_mover_capa,
+                args=(id_, eid, "bajar"),
+            )
+        with c_fondo:
+            st.button(
+                "⤓",
+                key=p + f"capa_fondo_{eid}",
+                disabled=(i == 0),
+                help="Enviar al fondo",
+                use_container_width=True,
+                on_click=_mover_capa,
+                args=(id_, eid, "fondo"),
+            )
+
+
 def _render_elemento(id_: str, eid: str, indice: int):
     p = f"pe_{id_}_"
     ep = p + f"el_{eid}_"
     tipo = st.session_state.get(ep + "tipo", "texto")
     etiqueta = _ETIQUETAS_TIPO_ELEMENTO.get(tipo, tipo)
+    bloqueado = st.session_state.get(ep + "bloqueado", False)
     with st.container(border=True):
         st.markdown(f"**{etiqueta} #{indice + 1}**")
+        if bloqueado:
+            st.caption(
+                "🔒 Bloqueado — posición y tamaño protegidos. Desbloquéalo en "
+                "el panel **Capas** para moverlo, redimensionarlo o eliminarlo."
+            )
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -544,6 +678,7 @@ def _render_elemento(id_: str, eid: str, indice: int):
                 60.0,
                 key=ep + "x",
                 step=0.1,
+                disabled=bloqueado,
             )
         with c2:
             st.number_input(
@@ -552,6 +687,7 @@ def _render_elemento(id_: str, eid: str, indice: int):
                 60.0,
                 key=ep + "y",
                 step=0.1,
+                disabled=bloqueado,
             )
         with c3:
             st.number_input(
@@ -560,6 +696,7 @@ def _render_elemento(id_: str, eid: str, indice: int):
                 ELEMENTO_TAMANO_MAX_CM,
                 key=ep + "ancho",
                 step=0.1,
+                disabled=bloqueado,
             )
         with c4:
             st.number_input(
@@ -568,19 +705,21 @@ def _render_elemento(id_: str, eid: str, indice: int):
                 ELEMENTO_TAMANO_MAX_CM,
                 key=ep + "alto",
                 step=0.1,
+                disabled=bloqueado,
             )
 
-        c5, c6, c7, c8 = st.columns(4)
+        c5, c6 = st.columns(2)
         with c5:
             st.number_input(
-                "Rotación (°)", ROTACION_MIN_GRADOS, ROTACION_MAX_GRADOS, key=ep + "rot", step=1.0
+                "Rotación (°)",
+                ROTACION_MIN_GRADOS,
+                ROTACION_MAX_GRADOS,
+                key=ep + "rot",
+                step=1.0,
+                disabled=bloqueado,
             )
         with c6:
-            st.number_input("Capa (z-index)", -100, 100, key=ep + "z", step=1)
-        with c7:
             st.slider("Opacidad", 0.0, 1.0, key=ep + "opacidad", step=0.05)
-        with c8:
-            st.checkbox("Visible", key=ep + "vis")
 
         if tipo == "texto":
             st.text_area("Texto", key=ep + "texto", height=80)
@@ -655,6 +794,8 @@ def _render_elemento(id_: str, eid: str, indice: int):
         st.button(
             "🗑️ Eliminar elemento",
             key=p + f"del_el_{eid}",
+            disabled=bloqueado,
+            help="Desbloquéalo en el panel «Capas» para poder eliminarlo." if bloqueado else None,
             on_click=_eliminar_elemento,
             args=(id_, eid),
         )
@@ -800,6 +941,15 @@ def _render_editor(cuenta: dict):
                         format_func=lambda layout: _ETIQUETAS_LAYOUT_SERVICIOS.get(layout, layout),
                         key=p + "serv_layout",
                     )
+
+        with st.expander("Capas", expanded=bool(st.session_state.get(p + "elementos_orden"))):
+            st.caption(
+                "Orden de apilado de los elementos libres (arriba = más "
+                "adelante). Aquí se controla visibilidad, bloqueo y capa; "
+                "la posición, tamaño y estilo de cada uno se editan en "
+                "«Elementos libres», justo abajo."
+            )
+            _render_panel_capas(id_)
 
         with st.expander("Elementos libres (texto, imágenes, formas)"):
             st.caption(

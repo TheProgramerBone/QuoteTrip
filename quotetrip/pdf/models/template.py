@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # ----------------------------------------------------------------------
 # Catálogos controlados — nunca se aceptan valores fuera de estas listas.
@@ -222,7 +222,14 @@ class ElementoLibre:
     `bloqueado` es una protección solo del editor (evita mover/redimensionar/
     eliminar por accidente, p.ej. un logo o un fondo ya bien puesto) — el
     renderer la ignora por completo, un elemento bloqueado se dibuja igual
-    que uno sin bloquear."""
+    que uno sin bloquear.
+
+    `grupo_id` (Fase de "Grupos"): elementos con el mismo `grupo_id` no
+    nulo se tratan como una unidad en el editor (agrupar/desagrupar/
+    duplicar/bloquear juntos desde el panel Capas, ver `plantillas_ui`) —
+    es una etiqueta de conveniencia del editor, sin ningún significado
+    para el renderer (no anida ni transforma nada; cada elemento del
+    grupo se sigue dibujando con sus propias x/y/ancho/alto de siempre)."""
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     tipo: str = "texto"
@@ -235,6 +242,7 @@ class ElementoLibre:
     visible: bool = True
     bloqueado: bool = False
     opacidad: float = 1.0
+    grupo_id: str | None = None
     opciones: dict = field(default_factory=dict)
 
 
@@ -286,6 +294,7 @@ class TemplateDefinition:
                 visible=bool(e.get("visible", True)),
                 bloqueado=bool(e.get("bloqueado", False)),
                 opacidad=e.get("opacidad", 1.0),
+                grupo_id=e.get("grupo_id"),
                 opciones=dict(e.get("opciones") or {}),
             )
             for e in data.get("elementos", [])
@@ -343,12 +352,13 @@ def migrar_definicion(data: dict) -> dict:
     "bloqueado" cae en `False` por defecto, y su `z_index` guardado se
     interpreta tal cual como orden de capa (0 = más atrás) — mismo
     significado de siempre, solo que ahora el editor lo deriva del panel
-    en vez de un campo numérico. Ambos son no-ops que solo actualizan el
+    en vez de un campo numérico. La v4 (grupos) tampoco: sin "grupo_id"
+    cae en `None` (sin grupo). Todas son no-ops que solo actualizan el
     número, pero dejan el punto de extensión listo para cuando un cambio
     de esquema sí necesite tocar los datos."""
     # version = data.get("schema_version", 1)
-    # if version < 4:
-    #     data = _migrar_v3_a_v4(data)
+    # if version < 5:
+    #     data = _migrar_v4_a_v5(data)
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -452,6 +462,8 @@ def validar_plantilla(template: TemplateDefinition) -> list[str]:
         if not el.id or el.id in ids_vistos:
             el.id = uuid.uuid4().hex
         ids_vistos.add(el.id)
+        if el.grupo_id is not None and not isinstance(el.grupo_id, str):
+            el.grupo_id = None
 
         for campo, minimo, maximo in (
             ("ancho_cm", ELEMENTO_TAMANO_MIN_CM, ELEMENTO_TAMANO_MAX_CM),

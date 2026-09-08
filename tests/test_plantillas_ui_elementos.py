@@ -215,6 +215,106 @@ def test_distribuir_requiere_tres_seleccionados():
     assert st.session_state[p + f"el_{b}_x"] == 9.0  # sin cambios, solo 2 seleccionados
 
 
+def test_agrupar_y_desagrupar():
+    _limpiar_session_state()
+    id_ = "tpl_grupo"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+
+    pu._agrupar(id_)
+    grupo_a = st.session_state[p + f"el_{a}_grupo"]
+    grupo_b = st.session_state[p + f"el_{b}_grupo"]
+    assert grupo_a and grupo_a == grupo_b
+    assert pu._grupo_comun(id_, [a, b]) == grupo_a
+
+    pu._desagrupar(id_)
+    assert st.session_state[p + f"el_{a}_grupo"] is None
+    assert st.session_state[p + f"el_{b}_grupo"] is None
+
+
+def test_agrupar_requiere_al_menos_dos_seleccionados():
+    _limpiar_session_state()
+    id_ = "tpl_grupo2"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._agregar_elemento(id_, "texto")
+    (a,) = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_sel"] = True
+
+    pu._agrupar(id_)
+    assert st.session_state[p + f"el_{a}_grupo"] is None
+
+
+def test_duplicar_elemento_simple_conserva_contenido():
+    _limpiar_session_state()
+    id_ = "tpl_dup"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._agregar_elemento(id_, "texto")
+    (original,) = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{original}_texto"] = "Contenido original"
+    st.session_state[p + f"el_{original}_x"] = 4.0
+
+    pu._duplicar_elemento_simple(id_, original)  # callback de botón: no devuelve nada
+    orden = st.session_state[p + "elementos_orden"]
+    assert len(orden) == 2
+    nuevo_id = orden[-1]
+    assert st.session_state[p + f"el_{nuevo_id}_texto"] == "Contenido original"
+    assert st.session_state[p + f"el_{nuevo_id}_x"] == 4.0
+    assert nuevo_id != original
+
+
+def test_duplicar_seleccion_agrupada_queda_agrupada_por_separado():
+    _limpiar_session_state()
+    id_ = "tpl_dupgrupo"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+    pu._agrupar(id_)
+    grupo_original = st.session_state[p + f"el_{a}_grupo"]
+
+    pu._duplicar_seleccionados(id_)
+    orden = st.session_state[p + "elementos_orden"]
+    assert len(orden) == 4
+    nuevos = [eid for eid in orden if eid not in (a, b)]
+    grupos_nuevos = {st.session_state[p + f"el_{eid}_grupo"] for eid in nuevos}
+    assert len(grupos_nuevos) == 1
+    (grupo_nuevo,) = grupos_nuevos
+    assert grupo_nuevo and grupo_nuevo != grupo_original
+
+
+def test_mover_seleccion_desplaza_todos_por_igual():
+    _limpiar_session_state()
+    id_ = "tpl_moversel"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_x"] = 1.0
+    st.session_state[p + f"el_{a}_y"] = 1.0
+    st.session_state[p + f"el_{b}_x"] = 5.0
+    st.session_state[p + f"el_{b}_y"] = 5.0
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+
+    pu._mover_seleccion(id_, 2.0, -1.0)
+    assert st.session_state[p + f"el_{a}_x"] == 3.0
+    assert st.session_state[p + f"el_{a}_y"] == 0.0
+    assert st.session_state[p + f"el_{b}_x"] == 7.0
+    assert st.session_state[p + f"el_{b}_y"] == 4.0
+
+
 def test_seed_desde_definicion_existente_recupera_los_elementos():
     _limpiar_session_state()
     id_ = "tpl_test3"

@@ -1,7 +1,7 @@
 {
-  "version": "1.4.3",
+  "version": "1.4.4",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: marca varios elementos libres desde el panel Capas y alinéalos (izquierda/centro/derecha/arriba/medio/abajo) o distribúyelos con espaciado uniforme, todo con un click."
+  "notas": "Editor de plantillas: agrupa varios elementos libres para tratarlos como una unidad (bloquear/duplicar/mover juntos con un desplazamiento en X/Y), o duplica y desagrupa cuando lo necesites."
 }

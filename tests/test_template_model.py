@@ -183,6 +183,32 @@ def test_from_dict_sin_bloqueado_no_revienta():
     assert restaurada.elementos[0].bloqueado is False
 
 
+def test_round_trip_json_con_grupo():
+    original = _plantilla_minima(
+        elementos=[
+            ElementoLibre(tipo="texto", grupo_id="g1"),
+            ElementoLibre(tipo="forma", grupo_id="g1"),
+        ]
+    )
+    restaurada = TemplateDefinition.from_json(original.to_json())
+    assert restaurada.elementos[0].grupo_id == "g1"
+    assert restaurada.elementos[1].grupo_id == "g1"
+
+
+def test_from_dict_sin_grupo_id_no_revienta():
+    data = _plantilla_minima(elementos=[ElementoLibre(tipo="texto")]).to_dict()
+    del data["elementos"][0]["grupo_id"]
+    restaurada = TemplateDefinition.from_dict(data)
+    assert restaurada.elementos[0].grupo_id is None
+
+
+def test_validar_limpia_grupo_id_de_tipo_invalido():
+    plantilla = _plantilla_minima(elementos=[ElementoLibre(tipo="texto")])
+    plantilla.elementos[0].grupo_id = 123  # tipo inválido, nunca eval/exec en juego
+    validar_plantilla(plantilla)
+    assert plantilla.elementos[0].grupo_id is None
+
+
 def test_validar_avisa_elemento_fuera_de_pagina():
     plantilla = _plantilla_minima(
         elementos=[ElementoLibre(tipo="texto", x_cm=500.0, y_cm=500.0, ancho_cm=2.0, alto_cm=2.0)]

@@ -11,6 +11,7 @@ script, y confirmación en dos pasos para acciones destructivas
 (`confirmar_borrado` en `cotizacion_ui.py`)."""
 
 import base64
+import dataclasses
 import uuid
 
 import streamlit as st
@@ -521,6 +522,123 @@ def _render_barra_alinear(id_: str):
 
 
 # ----------------------------------------------------------------------
+# Grupos + duplicar/mover selección (Fase 4 del plan "editor visual")
+# ----------------------------------------------------------------------
+def _grupo_comun(id_: str, seleccion: list[str]) -> str | None:
+    """Si `seleccion` (no vacía) comparte un mismo grupo (no `None`), lo
+    devuelve; si está vacía, tiene grupos distintos, o ninguno tiene
+    grupo, devuelve `None`."""
+    if not seleccion:
+        return None
+    ss = st.session_state
+    grupos = {ss.get(f"pe_{id_}_el_{eid}_grupo") for eid in seleccion}
+    if len(grupos) == 1:
+        (unico,) = grupos
+        return unico
+    return None
+
+
+def _agrupar(id_: str):
+    seleccion = _elementos_seleccionados(id_)
+    if len(seleccion) < 2:
+        return
+    nuevo_grupo = uuid.uuid4().hex
+    for eid in seleccion:
+        st.session_state[f"pe_{id_}_el_{eid}_grupo"] = nuevo_grupo
+
+
+def _desagrupar(id_: str):
+    for eid in _elementos_seleccionados(id_):
+        st.session_state[f"pe_{id_}_el_{eid}_grupo"] = None
+
+
+def _duplicar_seleccionados(id_: str):
+    """Duplica todos los elementos marcados con "Sel". Si comparten un
+    mismo grupo, el duplicado queda agrupado entre sí bajo un grupo nuevo
+    (no mezclado con el original); si no tienen grupo, quedan sueltos."""
+    seleccion = _elementos_seleccionados(id_)
+    if not seleccion:
+        return
+    grupo_origen = _grupo_comun(id_, seleccion)
+    nuevo_grupo = uuid.uuid4().hex if grupo_origen else None
+    for eid in seleccion:
+        _duplicar_elemento(id_, eid, nuevo_grupo_id=nuevo_grupo)
+
+
+def _mover_seleccion(id_: str, dx: float, dy: float):
+    """Desplaza todos los elementos seleccionados el mismo delta — el
+    sustituto de "arrastrar un grupo" sin canvas de arrastre: mueve varios
+    elementos (agrupados o no) como si fueran una unidad, sin tener que
+    editar cada x/y por separado."""
+    if not dx and not dy:
+        return
+    ss = st.session_state
+    for eid in _elementos_seleccionados(id_):
+        ep = f"pe_{id_}_el_{eid}_"
+        ss[ep + "x"] = _clamp_posicion(ss.get(ep + "x", 1.0) + dx)
+        ss[ep + "y"] = _clamp_posicion(ss.get(ep + "y", 1.0) + dy)
+
+
+def _render_barra_grupo(id_: str):
+    seleccion = _elementos_seleccionados(id_)
+    grupo_actual = _grupo_comun(id_, seleccion)
+    p = f"pe_{id_}_"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.button(
+            "🗂️ Agrupar seleccionados",
+            key=p + "agrupar",
+            disabled=len(seleccion) < 2,
+            help="Marca 2 o más elementos (checkbox «Sel») para agruparlos.",
+            use_container_width=True,
+            on_click=_agrupar,
+            args=(id_,),
+        )
+    with c2:
+        st.button(
+            "✂️ Desagrupar",
+            key=p + "desagrupar",
+            disabled=not grupo_actual,
+            help="Marca los elementos de un mismo grupo para separarlos.",
+            use_container_width=True,
+            on_click=_desagrupar,
+            args=(id_,),
+        )
+    with c3:
+        st.button(
+            "⧉ Duplicar selección",
+            key=p + "dup_seleccion",
+            disabled=not seleccion,
+            use_container_width=True,
+            on_click=_duplicar_seleccionados,
+            args=(id_,),
+        )
+
+    if seleccion:
+        st.session_state.setdefault(p + "mover_dx", 0.0)
+        st.session_state.setdefault(p + "mover_dy", 0.0)
+        st.caption("Mover la selección completa (cm) — sustituto de arrastrarla con el mouse:")
+        m1, m2, m3 = st.columns([1, 1, 2])
+        with m1:
+            st.number_input("Δx", -60.0, 60.0, key=p + "mover_dx", step=0.1)
+        with m2:
+            st.number_input("Δy", -60.0, 60.0, key=p + "mover_dy", step=0.1)
+        with m3:
+            st.button(
+                "➤ Aplicar desplazamiento",
+                key=p + "mover_aplicar",
+                use_container_width=True,
+                on_click=_mover_seleccion,
+                args=(
+                    id_,
+                    st.session_state.get(p + "mover_dx", 0.0),
+                    st.session_state.get(p + "mover_dy", 0.0),
+                ),
+            )
+
+
+# ----------------------------------------------------------------------
 # Editor
 # ----------------------------------------------------------------------
 def _seed_editor_state(id_: str, definicion: TemplateDefinition):
@@ -584,6 +702,7 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
     # "sel" (marcado para alinear/distribuir) es puramente del editor — nunca
     # se guarda en el modelo, siempre arranca sin marcar al (re)abrir.
     st.session_state[ep + "sel"] = False
+    st.session_state[ep + "grupo"] = e.grupo_id if e else None
     st.session_state[ep + "opacidad"] = float(e.opacidad) if e else 1.0
     if tipo == "texto":
         st.session_state[ep + "texto"] = op.get("texto", "Texto")
@@ -677,57 +796,105 @@ def _construir_definicion_desde_widgets(id_: str, base_id: str | None) -> Templa
     )
 
 
+def _elemento_desde_widgets(p: str, eid: str) -> ElementoLibre | None:
+    """Extrae el `ElementoLibre` de un elemento concreto desde sus claves
+    de `session_state` (`None` si ya no existe — se eliminó en este mismo
+    paso de edición). Comparte esta lógica `_elementos_desde_widgets`
+    (construir la lista completa para guardar/previsualizar) y
+    `_duplicar_elemento` (clonar uno solo): un elemento suelto y uno
+    duplicado se leen exactamente igual. `z_index` sale en 0 — quien
+    arma la lista completa lo recalcula según la posición en
+    `elementos_orden` (ver esa función); a un duplicado no le hace falta,
+    `_duplicar_elemento` solo usa la posición/estilo, no ese campo."""
+    ss = st.session_state
+    ep = p + f"el_{eid}_"
+    if ep + "tipo" not in ss:
+        return None
+    tipo = ss.get(ep + "tipo", "texto")
+    if tipo == "texto":
+        opciones = {
+            "texto": ss.get(ep + "texto", ""),
+            "fuente_id": ss.get(ep + "fuente", FUENTE_POR_DEFECTO),
+            "tamano_pt": ss.get(ep + "tam", 10.5),
+            "peso": ss.get(ep + "peso", "normal"),
+            "color": ss.get(ep + "color") or "#000000",
+            "alineacion": ss.get(ep + "alin", "izquierda"),
+            "interlineado": ss.get(ep + "interlineado", 1.15),
+        }
+    elif tipo == "forma":
+        opciones = {
+            "forma": ss.get(ep + "forma", "rectangulo"),
+            "color_relleno": ss.get(ep + "rel") if ss.get(ep + "rel_on") else None,
+            "color_borde": ss.get(ep + "bor") if ss.get(ep + "bor_on") else None,
+            "grosor_borde_pt": ss.get(ep + "grosor", 1.0),
+            "radio_cm": ss.get(ep + "radio", 0.3),
+        }
+    else:  # "imagen"
+        opciones = {
+            "imagen_b64": ss.get(ep + "imagen_b64"),
+            "ajuste": ss.get(ep + "ajuste", "contain"),
+        }
+    return ElementoLibre(
+        id=eid,
+        tipo=tipo,
+        x_cm=ss.get(ep + "x", 1.0),
+        y_cm=ss.get(ep + "y", 1.0),
+        ancho_cm=ss.get(ep + "ancho", 5.0),
+        alto_cm=ss.get(ep + "alto", 2.0),
+        rotacion_grados=ss.get(ep + "rot", 0.0),
+        z_index=0,
+        visible=bool(ss.get(ep + "vis", True)),
+        bloqueado=bool(ss.get(ep + "bloqueado", False)),
+        opacidad=ss.get(ep + "opacidad", 1.0),
+        grupo_id=ss.get(ep + "grupo"),
+        opciones=opciones,
+    )
+
+
 def _elementos_desde_widgets(p: str) -> list[ElementoLibre]:
     ss = st.session_state
     elementos = []
     for i, eid in enumerate(ss.get(p + "elementos_orden", [])):
-        ep = p + f"el_{eid}_"
-        if ep + "tipo" not in ss:
+        el = _elemento_desde_widgets(p, eid)
+        if el is None:
             continue  # se eliminó en este mismo paso de edición
-        tipo = ss.get(ep + "tipo", "texto")
-        if tipo == "texto":
-            opciones = {
-                "texto": ss.get(ep + "texto", ""),
-                "fuente_id": ss.get(ep + "fuente", FUENTE_POR_DEFECTO),
-                "tamano_pt": ss.get(ep + "tam", 10.5),
-                "peso": ss.get(ep + "peso", "normal"),
-                "color": ss.get(ep + "color") or "#000000",
-                "alineacion": ss.get(ep + "alin", "izquierda"),
-                "interlineado": ss.get(ep + "interlineado", 1.15),
-            }
-        elif tipo == "forma":
-            opciones = {
-                "forma": ss.get(ep + "forma", "rectangulo"),
-                "color_relleno": ss.get(ep + "rel") if ss.get(ep + "rel_on") else None,
-                "color_borde": ss.get(ep + "bor") if ss.get(ep + "bor_on") else None,
-                "grosor_borde_pt": ss.get(ep + "grosor", 1.0),
-                "radio_cm": ss.get(ep + "radio", 0.3),
-            }
-        else:  # "imagen"
-            opciones = {
-                "imagen_b64": ss.get(ep + "imagen_b64"),
-                "ajuste": ss.get(ep + "ajuste", "contain"),
-            }
-        elementos.append(
-            ElementoLibre(
-                id=eid,
-                tipo=tipo,
-                x_cm=ss.get(ep + "x", 1.0),
-                y_cm=ss.get(ep + "y", 1.0),
-                ancho_cm=ss.get(ep + "ancho", 5.0),
-                alto_cm=ss.get(ep + "alto", 2.0),
-                rotacion_grados=ss.get(ep + "rot", 0.0),
-                # z_index ya no es un campo que el usuario edite a mano:
-                # es la posición del elemento en `elementos_orden`, que el
-                # panel "Capas" reordena (0 = más atrás, ver _mover_capa).
-                z_index=i,
-                visible=bool(ss.get(ep + "vis", True)),
-                bloqueado=bool(ss.get(ep + "bloqueado", False)),
-                opacidad=ss.get(ep + "opacidad", 1.0),
-                opciones=opciones,
-            )
-        )
+        # z_index ya no es un campo que el usuario edite a mano: es la
+        # posición del elemento en `elementos_orden`, que el panel
+        # "Capas" reordena (0 = más atrás, ver _mover_capa).
+        el.z_index = i
+        elementos.append(el)
     return elementos
+
+
+def _duplicar_elemento(id_: str, eid: str, *, nuevo_grupo_id=Ellipsis) -> str:
+    """Duplica el elemento `eid` (nuevo id, mismo contenido/posición/
+    estilo) insertándolo al frente del panel de capas (mismo criterio que
+    un elemento recién añadido). Devuelve el id del duplicado, o "" si
+    `eid` ya no existe.
+
+    `nuevo_grupo_id`: por defecto (`Ellipsis`, no confundir con `None`)
+    conserva el grupo del original tal cual; pasar `None` explícito deja
+    el duplicado suelto; pasar un id concreto se lo asigna — lo usa
+    `_duplicar_seleccionados` para que la copia de un grupo completo
+    quede agrupada entre sí, no mezclada con el original."""
+    p = f"pe_{id_}_"
+    original = _elemento_desde_widgets(p, eid)
+    if original is None:
+        return ""
+    nuevo_id = uuid.uuid4().hex
+    grupo = original.grupo_id if nuevo_grupo_id is Ellipsis else nuevo_grupo_id
+    duplicado = dataclasses.replace(original, id=nuevo_id, grupo_id=grupo)
+    orden = st.session_state.get(p + "elementos_orden", [])
+    orden.append(nuevo_id)
+    st.session_state[p + "elementos_orden"] = orden
+    _seed_elemento(p, nuevo_id, duplicado.tipo, duplicado)
+    return nuevo_id
+
+
+def _duplicar_elemento_simple(id_: str, eid: str):
+    """Callback del botón "Duplicar" de un elemento suelto en su
+    formulario de detalle — conserva su grupo tal cual si lo tenía."""
+    _duplicar_elemento(id_, eid)
 
 
 def _etiqueta_capa(ep: str, tipo: str) -> str:
@@ -744,7 +911,9 @@ def _etiqueta_capa(ep: str, tipo: str) -> str:
     else:  # "forma"
         forma = ss.get(ep + "forma", "rectangulo")
         detalle = _ETIQUETAS_FORMA.get(forma, forma)
-    return f"{icono} — {detalle}"
+    grupo = ss.get(ep + "grupo")
+    prefijo = f"🗂️{grupo[:4]} · " if grupo else ""
+    return f"{prefijo}{icono} — {detalle}"
 
 
 def _render_panel_capas(id_: str):
@@ -971,14 +1140,27 @@ def _render_elemento(id_: str, eid: str, indice: int):
                 key=ep + "ajuste",
             )
 
-        st.button(
-            "🗑️ Eliminar elemento",
-            key=p + f"del_el_{eid}",
-            disabled=bloqueado,
-            help="Desbloquéalo en el panel «Capas» para poder eliminarlo." if bloqueado else None,
-            on_click=_eliminar_elemento,
-            args=(id_, eid),
-        )
+        c_dup, c_del = st.columns(2)
+        with c_dup:
+            st.button(
+                "⧉ Duplicar",
+                key=p + f"dup_el_{eid}",
+                use_container_width=True,
+                on_click=_duplicar_elemento_simple,
+                args=(id_, eid),
+            )
+        with c_del:
+            st.button(
+                "🗑️ Eliminar elemento",
+                key=p + f"del_el_{eid}",
+                disabled=bloqueado,
+                help="Desbloquéalo en el panel «Capas» para poder eliminarlo."
+                if bloqueado
+                else None,
+                use_container_width=True,
+                on_click=_eliminar_elemento,
+                args=(id_, eid),
+            )
 
 
 def _render_editor(cuenta: dict):
@@ -1133,6 +1315,8 @@ def _render_editor(cuenta: dict):
             _render_panel_capas(id_)
             st.divider()
             _render_barra_alinear(id_)
+            st.divider()
+            _render_barra_grupo(id_)
 
         with st.expander("Elementos libres (texto, imágenes, formas)"):
             st.caption(

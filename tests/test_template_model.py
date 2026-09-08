@@ -226,6 +226,26 @@ def test_validar_conserva_binding_valido():
     assert plantilla.elementos[0].opciones["binding"] == "cliente.nombre"
 
 
+def test_round_trip_json_con_aplicar_en():
+    original = _plantilla_minima(elementos=[ElementoLibre(tipo="texto", aplicar_en="primera")])
+    restaurada = TemplateDefinition.from_json(original.to_json())
+    assert restaurada.elementos[0].aplicar_en == "primera"
+
+
+def test_from_dict_sin_aplicar_en_cae_en_todas():
+    data = _plantilla_minima(elementos=[ElementoLibre(tipo="texto")]).to_dict()
+    del data["elementos"][0]["aplicar_en"]
+    restaurada = TemplateDefinition.from_dict(data)
+    assert restaurada.elementos[0].aplicar_en == "todas"
+
+
+def test_validar_corrige_aplicar_en_desconocido():
+    plantilla = _plantilla_minima(elementos=[ElementoLibre(tipo="texto")])
+    plantilla.elementos[0].aplicar_en = "cada-martes"
+    validar_plantilla(plantilla)
+    assert plantilla.elementos[0].aplicar_en == "todas"
+
+
 def test_validar_avisa_elemento_fuera_de_pagina():
     plantilla = _plantilla_minima(
         elementos=[ElementoLibre(tipo="texto", x_cm=500.0, y_cm=500.0, ancho_cm=2.0, alto_cm=2.0)]

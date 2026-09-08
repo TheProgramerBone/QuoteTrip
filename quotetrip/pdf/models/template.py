@@ -21,7 +21,7 @@ from datetime import datetime
 
 from .bindings import CAMPOS_DINAMICOS
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # ----------------------------------------------------------------------
 # Catálogos controlados — nunca se aceptan valores fuera de estas listas.
@@ -91,6 +91,14 @@ _TAMANOS_PAGINA_CM = {"A4": (21.0, 29.7), "Carta": (21.59, 27.94)}
 TIPOS_ELEMENTO = ("texto", "imagen", "forma")
 FORMAS_CATALOGO = ("rectangulo", "rectangulo_redondeado", "elipse", "linea")
 AJUSTES_IMAGEN = ("contain", "cover", "stretch")
+
+# En qué páginas del documento se dibuja un elemento libre (Fase
+# "multi-página", versión acotada — ver docstring de `ElementoLibre` para
+# el porqué de no ir más allá de esto por ahora): "todas" (por defecto,
+# comportamiento histórico), "primera" (solo la portada) o "siguientes"
+# (todas menos la portada) — aprovecha los hooks nativos onFirstPage/
+# onLaterPages de ReportLab, que ya distinguen esto sin bookkeeping propio.
+APLICAR_EN_CATALOGO = ("todas", "primera", "siguientes")
 
 # Rangos seguros para validar_plantilla().
 MARGEN_MIN_CM, MARGEN_MAX_CM = 1.0, 5.0
@@ -237,7 +245,23 @@ class ElementoLibre:
     duplicar/bloquear juntos desde el panel Capas, ver `plantillas_ui`) —
     es una etiqueta de conveniencia del editor, sin ningún significado
     para el renderer (no anida ni transforma nada; cada elemento del
-    grupo se sigue dibujando con sus propias x/y/ancho/alto de siempre)."""
+    grupo se sigue dibujando con sus propias x/y/ancho/alto de siempre).
+
+    `aplicar_en` (Fase "multi-página", ver `APLICAR_EN_CATALOGO`): en qué
+    páginas se dibuja. Esta es deliberadamente una versión acotada de
+    "multi-página" — QuoteTrip NO tiene todavía un concepto de páginas de
+    plantilla independientes y diseñables (portada/servicios/condiciones
+    como unidades separadas con su propio contenido): las páginas reales
+    del PDF las decide Platypus en su propio pase de layout dentro de
+    `doc.build()`, según cuántas opciones tenga la cotización y cuánto
+    ocupe cada una — no hay una lista de páginas fija que el editor pueda
+    ofrecer para "añadir/duplicar/reordenar". Lo que SÍ es seguro y barato
+    es distinguir primera página (portada) de las siguientes, porque
+    ReportLab ya expone esa distinción de fábrica (`onFirstPage` vs
+    `onLaterPages`) sin necesitar rastrear a qué opción pertenece cada
+    página. Cubre el caso de uso real más común (foto de portada grande,
+    marca de agua desde la página 2) sin la reescritura mayor de
+    `renderer.py` que un editor de páginas de verdad requeriría."""
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     tipo: str = "texto"
@@ -251,6 +275,7 @@ class ElementoLibre:
     bloqueado: bool = False
     opacidad: float = 1.0
     grupo_id: str | None = None
+    aplicar_en: str = "todas"
     opciones: dict = field(default_factory=dict)
 
 
@@ -303,6 +328,7 @@ class TemplateDefinition:
                 bloqueado=bool(e.get("bloqueado", False)),
                 opacidad=e.get("opacidad", 1.0),
                 grupo_id=e.get("grupo_id"),
+                aplicar_en=e.get("aplicar_en", "todas"),
                 opciones=dict(e.get("opciones") or {}),
             )
             for e in data.get("elementos", [])
@@ -361,12 +387,14 @@ def migrar_definicion(data: dict) -> dict:
     interpreta tal cual como orden de capa (0 = más atrás) — mismo
     significado de siempre, solo que ahora el editor lo deriva del panel
     en vez de un campo numérico. La v4 (grupos) tampoco: sin "grupo_id"
-    cae en `None` (sin grupo). Todas son no-ops que solo actualizan el
+    cae en `None` (sin grupo). La v5 (aplicar_en: primera página vs
+    siguientes) tampoco: sin "aplicar_en" cae en "todas" — el
+    comportamiento de siempre. Todas son no-ops que solo actualizan el
     número, pero dejan el punto de extensión listo para cuando un cambio
     de esquema sí necesite tocar los datos."""
     # version = data.get("schema_version", 1)
-    # if version < 5:
-    #     data = _migrar_v4_a_v5(data)
+    # if version < 6:
+    #     data = _migrar_v5_a_v6(data)
     data["schema_version"] = SCHEMA_VERSION
     return data
 
@@ -472,6 +500,8 @@ def validar_plantilla(template: TemplateDefinition) -> list[str]:
         ids_vistos.add(el.id)
         if el.grupo_id is not None and not isinstance(el.grupo_id, str):
             el.grupo_id = None
+        if el.aplicar_en not in APLICAR_EN_CATALOGO:
+            el.aplicar_en = "todas"
 
         for campo, minimo, maximo in (
             ("ancho_cm", ELEMENTO_TAMANO_MIN_CM, ELEMENTO_TAMANO_MAX_CM),

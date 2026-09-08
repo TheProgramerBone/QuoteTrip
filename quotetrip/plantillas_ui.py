@@ -27,6 +27,7 @@ from .db import (
 from .pdf.models import (
     AJUSTES_IMAGEN,
     ALINEACIONES,
+    APLICAR_EN_CATALOGO,
     CAMPOS_DINAMICOS,
     ELEMENTO_TAMANO_MAX_CM,
     ELEMENTO_TAMANO_MIN_CM,
@@ -88,6 +89,11 @@ _ETIQUETAS_AJUSTE_IMAGEN = {
     "contain": "Ajustar sin recortar",
     "cover": "Rellenar la caja (recorta)",
     "stretch": "Estirar (puede deformar)",
+}
+_ETIQUETAS_APLICAR_EN = {
+    "todas": "Todas las páginas",
+    "primera": "Solo la primera página (portada)",
+    "siguientes": "Todas menos la primera",
 }
 
 # Campos de la cuenta que afectan a la vista previa — se usan como parte de
@@ -705,6 +711,7 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
     # se guarda en el modelo, siempre arranca sin marcar al (re)abrir.
     st.session_state[ep + "sel"] = False
     st.session_state[ep + "grupo"] = e.grupo_id if e else None
+    st.session_state[ep + "aplicar_en"] = e.aplicar_en if e else "todas"
     st.session_state[ep + "opacidad"] = float(e.opacidad) if e else 1.0
     if tipo == "texto":
         st.session_state[ep + "texto"] = op.get("texto", "Texto")
@@ -859,6 +866,7 @@ def _elemento_desde_widgets(p: str, eid: str) -> ElementoLibre | None:
         bloqueado=bool(ss.get(ep + "bloqueado", False)),
         opacidad=ss.get(ep + "opacidad", 1.0),
         grupo_id=ss.get(ep + "grupo"),
+        aplicar_en=ss.get(ep + "aplicar_en", "todas"),
         opciones=opciones,
     )
 
@@ -930,7 +938,9 @@ def _etiqueta_capa(ep: str, tipo: str) -> str:
         detalle = _ETIQUETAS_FORMA.get(forma, forma)
     grupo = ss.get(ep + "grupo")
     prefijo = f"🗂️{grupo[:4]} · " if grupo else ""
-    return f"{prefijo}{icono} — {detalle}"
+    aplicar_en = ss.get(ep + "aplicar_en", "todas")
+    sufijo = {"primera": " · ①", "siguientes": " · ②+"}.get(aplicar_en, "")
+    return f"{prefijo}{icono} — {detalle}{sufijo}"
 
 
 def _render_panel_capas(id_: str):
@@ -1086,6 +1096,15 @@ def _render_elemento(id_: str, eid: str, indice: int):
             )
         with c6:
             st.slider("Opacidad", 0.0, 1.0, key=ep + "opacidad", step=0.05)
+
+        st.selectbox(
+            "Aplicar en",
+            options=list(APLICAR_EN_CATALOGO),
+            format_func=lambda a: _ETIQUETAS_APLICAR_EN.get(a, a),
+            key=ep + "aplicar_en",
+            help="Útil para una foto de portada grande, o una marca de agua "
+            "que solo debe verse a partir de la segunda página.",
+        )
 
         if tipo == "texto":
             st.selectbox(

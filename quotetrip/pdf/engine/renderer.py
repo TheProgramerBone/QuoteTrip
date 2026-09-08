@@ -75,17 +75,27 @@ def renderizar_plantilla(template, glob: dict, opciones: list) -> bytes:
 
         dibujar_encabezado_pie = construir_encabezado_pie(glob, template)
 
-        def dibujar(canvas, doc):
+        def _dibujar(canvas, doc, es_primera_pagina: bool):
             # Elementos libres primero (quedan de fondo), encabezado/pie
             # encima — ambos se pintan antes que el `story` de la
             # cotización, que ReportLab dibuja por su cuenta sobre esto.
             # `glob` es el mismo en todas las páginas (nivel documento, no
             # por-opción) — ver el alcance deliberado documentado en
             # `pdf/models/bindings.py`.
-            dibujar_elementos_libres(canvas, template, doc.pagesize[1], datos=glob)
+            dibujar_elementos_libres(
+                canvas, template, doc.pagesize[1], datos=glob, es_primera_pagina=es_primera_pagina
+            )
             dibujar_encabezado_pie(canvas, doc)
 
-        doc.build(story, onFirstPage=dibujar, onLaterPages=dibujar)
+        # Dos hooks en vez de uno: son el punto donde ReportLab YA sabe
+        # distinguir portada de las siguientes páginas sin que nosotros
+        # tengamos que rastrear a qué opción pertenece cada una — ver
+        # `aplicar_en` en `ElementoLibre` (pdf/models/template.py).
+        doc.build(
+            story,
+            onFirstPage=lambda c, d: _dibujar(c, d, es_primera_pagina=True),
+            onLaterPages=lambda c, d: _dibujar(c, d, es_primera_pagina=False),
+        )
 
     buffer.seek(0)
     return buffer.getvalue()

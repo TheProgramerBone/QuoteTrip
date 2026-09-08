@@ -1,7 +1,7 @@
 {
-  "version": "1.4.5",
+  "version": "1.4.6",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: los elementos de texto libre ahora pueden mostrar un dato real de la cotización (nombre del cliente, NIT, fecha...) en vez de texto fijo — se actualiza solo en cada cotización nueva, sin tocar la plantilla."
+  "notas": "Editor de plantillas: cada elemento libre ahora puede aplicarse solo a la primera página (portada), a todas menos la primera, o a todas — ideal para una foto de portada grande o una marca de agua desde la página 2."
 }

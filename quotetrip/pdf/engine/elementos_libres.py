@@ -160,7 +160,13 @@ def _dibujar_imagen(c, el, x, y, ancho, alto, datos):
 _DIBUJANTES = {"texto": _dibujar_texto, "forma": _dibujar_forma, "imagen": _dibujar_imagen}
 
 
-def dibujar_elementos_libres(c, template, alto_pagina_pt: float, datos: dict | None = None) -> None:
+def dibujar_elementos_libres(
+    c,
+    template,
+    alto_pagina_pt: float,
+    datos: dict | None = None,
+    es_primera_pagina: bool = True,
+) -> None:
     """Dibuja `template.elementos` visibles, en orden de `z_index`
     ascendente (los de mayor z_index quedan encima de los demás elementos
     libres — nunca encima del contenido de la cotización, ver docstring
@@ -170,8 +176,23 @@ def dibujar_elementos_libres(c, template, alto_pagina_pt: float, datos: dict | N
     `datos`: el `glob` de la cotización (ver `renderer.renderizar_plantilla`),
     para resolver los `binding` de texto dinámico — ver `_dibujar_texto` y
     `pdf/models/bindings.py`. `None` (el default) hace que cualquier
-    binding quede sin resolver (texto vacío), nunca una excepción."""
-    visibles = [e for e in template.elementos if e.visible]
+    binding quede sin resolver (texto vacío), nunca una excepción.
+
+    `es_primera_pagina`: filtra por `el.aplicar_en` ("todas" siempre pasa;
+    "primera" solo si es `True`; "siguientes" solo si es `False`) — ver
+    `APLICAR_EN_CATALOGO` en `pdf/models/template.py`. `renderer.py` llama
+    esta función una vez por cada hook `onFirstPage`/`onLaterPages` de
+    ReportLab, pasando el valor correspondiente."""
+    visibles = [
+        e
+        for e in template.elementos
+        if e.visible
+        and (
+            e.aplicar_en == "todas"
+            or (e.aplicar_en == "primera" and es_primera_pagina)
+            or (e.aplicar_en == "siguientes" and not es_primera_pagina)
+        )
+    ]
     for el in sorted(visibles, key=lambda e: e.z_index):
         dibujante = _DIBUJANTES.get(el.tipo)
         if dibujante is None:

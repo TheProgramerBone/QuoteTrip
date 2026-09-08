@@ -5,6 +5,7 @@ from .bindings import CAMPOS_DINAMICOS, etiqueta_campo, resolver_campo
 from .template import (
     AJUSTES_IMAGEN,
     ALINEACIONES,
+    APLICAR_EN_CATALOGO,
     ELEMENTO_TAMANO_MAX_CM,
     ELEMENTO_TAMANO_MIN_CM,
     FORMAS_CATALOGO,
@@ -39,6 +40,7 @@ from .template import (
 
 __all__ = [
     "AJUSTES_IMAGEN",
+    "APLICAR_EN_CATALOGO",
     "CAMPOS_DINAMICOS",
     "ALINEACIONES",
     "ELEMENTO_TAMANO_MAX_CM",

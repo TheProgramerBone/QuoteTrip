@@ -28,6 +28,11 @@ def _texto(pdf_bytes: bytes) -> str:
     return " ".join(" ".join((p.extract_text() or "").split()) for p in lector.pages)
 
 
+def _texto_por_pagina(pdf_bytes: bytes) -> list[str]:
+    lector = PdfReader(io.BytesIO(pdf_bytes))
+    return [" ".join((p.extract_text() or "").split()) for p in lector.pages]
+
+
 def test_construir_pdf_sin_template_usa_clasica(glob_de_prueba, opcion_de_prueba):
     """Regresión: la firma histórica exacta de `cotizacion_ui.py:415` (sin
     argumento `template`) debe seguir funcionando tal cual."""
@@ -158,6 +163,49 @@ def test_elemento_texto_con_binding_desconocido_no_rompe(glob_de_prueba, opcion_
     pdf_bytes = renderizar_plantilla(plantilla, glob_de_prueba, [opcion_de_prueba()])
     assert pdf_bytes[:5] == b"%PDF-"
     assert "Fallback" not in _texto(pdf_bytes)  # binding manda, no cae al texto literal
+
+
+def test_elemento_solo_en_primera_pagina(glob_de_prueba, opcion_de_prueba):
+    """`aplicar_en="primera"` aprovecha onFirstPage/onLaterPages de
+    ReportLab: aparece en la portada, no en las siguientes páginas."""
+    plantilla = obtener_preset("clasica")
+    plantilla.elementos = [
+        ElementoLibre(tipo="texto", aplicar_en="primera", opciones={"texto": "SoloPortada"})
+    ]
+    validar_plantilla(plantilla)
+    opciones = [
+        opcion_de_prueba("Plan A"),
+        opcion_de_prueba("Plan B"),
+    ]
+    pdf_bytes = construir_pdf(glob_de_prueba, opciones, template=plantilla)
+    paginas = _texto_por_pagina(pdf_bytes)
+    assert len(paginas) == 2
+    assert "SoloPortada" in paginas[0]
+    assert "SoloPortada" not in paginas[1]
+
+
+def test_elemento_en_todas_menos_la_primera(glob_de_prueba, opcion_de_prueba):
+    plantilla = obtener_preset("clasica")
+    plantilla.elementos = [
+        ElementoLibre(tipo="texto", aplicar_en="siguientes", opciones={"texto": "DesdePagina2"})
+    ]
+    validar_plantilla(plantilla)
+    opciones = [opcion_de_prueba("Plan A"), opcion_de_prueba("Plan B")]
+    pdf_bytes = construir_pdf(glob_de_prueba, opciones, template=plantilla)
+    paginas = _texto_por_pagina(pdf_bytes)
+    assert "DesdePagina2" not in paginas[0]
+    assert "DesdePagina2" in paginas[1]
+
+
+def test_elemento_en_todas_las_paginas_por_defecto(glob_de_prueba, opcion_de_prueba):
+    plantilla = obtener_preset("clasica")
+    plantilla.elementos = [ElementoLibre(tipo="texto", opciones={"texto": "SiempreVisible"})]
+    validar_plantilla(plantilla)
+    assert plantilla.elementos[0].aplicar_en == "todas"
+    opciones = [opcion_de_prueba("Plan A"), opcion_de_prueba("Plan B")]
+    pdf_bytes = construir_pdf(glob_de_prueba, opciones, template=plantilla)
+    paginas = _texto_por_pagina(pdf_bytes)
+    assert all("SiempreVisible" in p for p in paginas)
 
 
 def test_elemento_oculto_no_se_dibuja(glob_de_prueba, opcion_de_prueba):

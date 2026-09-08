@@ -144,16 +144,24 @@ def render_editor_plantilla(cuenta: dict):
 # ----------------------------------------------------------------------
 # Vista previa (cacheada)
 # ----------------------------------------------------------------------
+_ZOOM_DPI_BASE = 110  # el mismo default histórico de renderizar_previsualizacion()
+
+
 @st.cache_data(show_spinner=False, ttl=300)
-def _preview_desde_json(definicion_json: str, cuenta_valores: tuple) -> bytes:
+def _preview_desde_json(definicion_json: str, cuenta_valores: tuple, dpi: int) -> bytes:
     definicion = TemplateDefinition.from_json(definicion_json)
     cuenta = dict(zip(_CAMPOS_CUENTA_PREVIEW, cuenta_valores))
-    return renderizar_previsualizacion(definicion, cuenta)
+    return renderizar_previsualizacion(definicion, cuenta, dpi=dpi)
 
 
-def _preview_cacheada(definicion: TemplateDefinition, cuenta: dict) -> bytes:
+def _preview_cacheada(definicion: TemplateDefinition, cuenta: dict, zoom_pct: int = 100) -> bytes:
+    """`zoom_pct`: re-renderiza a más/menos DPI (no solo escala el PNG ya
+    rasterizado) para que la vista previa siga nítida al acercar el zoom
+    del editor — que es independiente del zoom/tamaño de ventana del
+    sistema operativo, ver punto 34 del plan."""
     cuenta_valores = tuple((cuenta or {}).get(c) for c in _CAMPOS_CUENTA_PREVIEW)
-    return _preview_desde_json(definicion.to_json(), cuenta_valores)
+    dpi = max(40, round(_ZOOM_DPI_BASE * zoom_pct / 100))
+    return _preview_desde_json(definicion.to_json(), cuenta_valores, dpi)
 
 
 # ----------------------------------------------------------------------
@@ -772,6 +780,11 @@ def _seed_editor_state(id_: str, definicion: TemplateDefinition, *, reset_histor
     st.session_state[p + "elementos_orden"] = [e.id for e in elementos_por_capa]
     for e in definicion.elementos:
         _seed_elemento(p, e.id, e.tipo, e)
+    # Elemento mostrado en el panel "Propiedades" — el último (más
+    # adelante) al abrir, o ninguno si la plantilla no tiene elementos.
+    st.session_state[p + "elemento_activo"] = (
+        elementos_por_capa[-1].id if elementos_por_capa else None
+    )
 
 
 def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None = None):
@@ -824,6 +837,9 @@ def _agregar_elemento(id_: str, tipo: str):
     orden.append(nuevo_id)
     st.session_state[p + "elementos_orden"] = orden
     _seed_elemento(p, nuevo_id, tipo)
+    # Salta directo a editarlo en el panel "Propiedades" — igual que
+    # insertar una forma nueva en Canva la deja seleccionada al momento.
+    st.session_state[p + "elemento_activo"] = nuevo_id
 
 
 def _eliminar_elemento(id_: str, elemento_id: str):
@@ -990,6 +1006,7 @@ def _duplicar_elemento(id_: str, eid: str, *, nuevo_grupo_id=Ellipsis) -> str:
     orden.append(nuevo_id)
     st.session_state[p + "elementos_orden"] = orden
     _seed_elemento(p, nuevo_id, duplicado.tipo, duplicado)
+    st.session_state[p + "elemento_activo"] = nuevo_id
     return nuevo_id
 
 
@@ -1304,6 +1321,288 @@ def _render_elemento(id_: str, eid: str, indice: int):
             )
 
 
+def _render_barra_herramientas(id_: str, base_id: str | None):
+    """Fila superior del editor — Canva-style: volver, título editable
+    en línea, deshacer/rehacer y guardar, todo siempre a la vista (nada
+    de esto vivía antes en un lugar fijo)."""
+    p = f"pe_{id_}_"
+    c_volver, c_nombre, c_deshacer, c_rehacer, c_guardar = st.columns([1.1, 3, 0.7, 0.7, 1.1])
+    with c_volver:
+        st.button("← Volver", key=p + "volver", use_container_width=True, on_click=_cerrar_editor)
+    with c_nombre:
+        st.text_input(
+            "Nombre de la plantilla",
+            key=p + "nombre",
+            label_visibility="collapsed",
+            placeholder="Nombre de la plantilla",
+        )
+    with c_deshacer:
+        st.button(
+            "↶",
+            key=p + "deshacer",
+            help="Deshacer",
+            disabled=not st.session_state.get(p + "undo"),
+            use_container_width=True,
+            on_click=_deshacer,
+            args=(id_,),
+        )
+    with c_rehacer:
+        st.button(
+            "↷",
+            key=p + "rehacer",
+            help="Rehacer",
+            disabled=not st.session_state.get(p + "redo"),
+            use_container_width=True,
+            on_click=_rehacer,
+            args=(id_,),
+        )
+    with c_guardar:
+        st.button(
+            "💾 Guardar",
+            key=p + "guardar",
+            type="primary",
+            use_container_width=True,
+            on_click=_guardar_plantilla,
+            args=(id_, base_id),
+        )
+
+
+def _render_panel_diseno(id_: str):
+    """Pestaña "Diseño": tema, página, encabezado/pie y estructura de
+    secciones — antes eran 4 expanders sueltos en la columna izquierda,
+    ahora conviven en su propia pestaña del panel de herramientas."""
+    p = f"pe_{id_}_"
+    with st.expander("Tema", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.checkbox("Usar el color primario de la cuenta", key=p + "cp_heredar")
+            if not st.session_state[p + "cp_heredar"]:
+                st.color_picker("Color primario", key=p + "cp")
+        with c2:
+            st.checkbox("Usar el color secundario de la cuenta", key=p + "cs_heredar")
+            if not st.session_state[p + "cs_heredar"]:
+                st.color_picker("Color secundario", key=p + "cs")
+        st.selectbox(
+            "Tipografía",
+            options=list(FUENTES_CATALOGO.keys()),
+            format_func=lambda k: FUENTES_CATALOGO[k]["etiqueta"],
+            key=p + "fuente",
+        )
+        st.slider(
+            "Tamaño de letra base (pt)",
+            TAMANO_FUENTE_MIN_PT,
+            TAMANO_FUENTE_MAX_PT,
+            key=p + "tam_base",
+            step=0.5,
+        )
+        st.selectbox(
+            "Alineación de títulos",
+            options=list(ALINEACIONES),
+            format_func=lambda a: _ETIQUETAS_ALINEACION.get(a, a),
+            key=p + "alin_titulos",
+        )
+
+    with st.expander("Página"):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.selectbox("Tamaño", options=list(TAMANOS_PAGINA), key=p + "pag_tam")
+        with c2:
+            st.selectbox(
+                "Orientación",
+                options=list(ORIENTACIONES),
+                format_func=lambda o: _ETIQUETAS_ORIENTACION.get(o, o),
+                key=p + "pag_orient",
+            )
+        c3, c4 = st.columns(2)
+        with c3:
+            st.number_input(
+                "Margen superior (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mS", step=0.1
+            )
+            st.number_input(
+                "Margen izquierdo (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mIz", step=0.1
+            )
+        with c4:
+            st.number_input(
+                "Margen inferior (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mI", step=0.1
+            )
+            st.number_input(
+                "Margen derecho (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mD", step=0.1
+            )
+
+    with st.expander("Encabezado y pie"):
+        st.checkbox("Mostrar logo", key=p + "logo_mostrar")
+        if st.session_state[p + "logo_mostrar"]:
+            st.slider(
+                "Tamaño del logo (cm)",
+                LOGO_ALTO_MIN_CM,
+                LOGO_ALTO_MAX_CM,
+                key=p + "logo_alto",
+                step=0.1,
+            )
+            st.selectbox(
+                "Posición del logo",
+                options=list(POSICIONES_LOGO),
+                format_func=lambda pos: _ETIQUETAS_POSICION_LOGO.get(pos, pos),
+                key=p + "logo_pos",
+            )
+        st.checkbox("Línea separadora bajo el encabezado", key=p + "enc_linea")
+        st.checkbox("Línea separadora sobre el pie de página", key=p + "pie_linea")
+
+    with st.expander("Estructura (orden y secciones)", expanded=True):
+        st.caption(
+            "Activa o desactiva secciones y cambia su orden con las flechas. "
+            "Las marcadas como obligatorias no se pueden ocultar."
+        )
+        orden = st.session_state[p + "orden"]
+        for i, tipo in enumerate(orden):
+            bloqueada = tipo in SECCIONES_BLOQUEADAS
+            c_check, c_up, c_down = st.columns([5, 1, 1])
+            with c_check:
+                if bloqueada:
+                    st.checkbox(
+                        f"{ETIQUETAS_SECCION.get(tipo, tipo)} (obligatoria)",
+                        value=True,
+                        disabled=True,
+                        key=p + f"vis_disp_{tipo}",
+                    )
+                    st.session_state[p + f"vis_{tipo}"] = True
+                else:
+                    st.checkbox(ETIQUETAS_SECCION.get(tipo, tipo), key=p + f"vis_{tipo}")
+            with c_up:
+                st.button(
+                    "▲",
+                    key=p + f"up_{tipo}",
+                    disabled=(i == 0),
+                    on_click=_mover_seccion,
+                    args=(id_, tipo, -1),
+                    use_container_width=True,
+                )
+            with c_down:
+                st.button(
+                    "▼",
+                    key=p + f"down_{tipo}",
+                    disabled=(i == len(orden) - 1),
+                    on_click=_mover_seccion,
+                    args=(id_, tipo, 1),
+                    use_container_width=True,
+                )
+            if tipo == "servicios":
+                st.selectbox(
+                    "Cómo mostrar los servicios incluidos",
+                    options=list(LAYOUTS_SERVICIOS),
+                    format_func=lambda layout: _ETIQUETAS_LAYOUT_SERVICIOS.get(layout, layout),
+                    key=p + "serv_layout",
+                )
+
+
+def _render_panel_capas_tab(id_: str):
+    """Pestaña "Capas": el panel de capas + alinear/distribuir + grupo,
+    tal cual (Fases 1-3), solo reubicados fuera del expander que tenían
+    antes — el contenido y la lógica no cambian."""
+    st.caption(
+        "Orden de apilado de los elementos libres (arriba = más adelante). "
+        "Muestra/oculta, bloquea, reordena, y marca varios (checkbox "
+        "«Sel») para alinearlos, agruparlos o moverlos juntos."
+    )
+    _render_panel_capas(id_)
+    st.divider()
+    _render_barra_alinear(id_)
+    st.divider()
+    _render_barra_grupo(id_)
+
+
+def _render_panel_insertar(id_: str):
+    """Pestaña "Insertar": botones directos por tipo, en vez del
+    selector + botón "Añadir" de antes — un click, como la galería de
+    elementos de Canva (punto 50 del plan)."""
+    st.caption(
+        "Añade un elemento libre en cualquier posición de la página — "
+        "queda siempre detrás del contenido de la cotización, para "
+        "fondos, marcas de agua o decoración, no para taparla."
+    )
+    for tipo in TIPOS_ELEMENTO:
+        st.button(
+            _ETIQUETAS_TIPO_ELEMENTO.get(tipo, tipo),
+            key=f"pe_{id_}_insertar_{tipo}",
+            use_container_width=True,
+            on_click=_agregar_elemento,
+            args=(id_, tipo),
+        )
+
+
+def _render_panel_preview(id_: str, base_id: str | None, cuenta: dict):
+    """Panel central: la vista previa, ahora la pieza dominante de la
+    pantalla (antes era una imagen pequeña junto a un formulario largo).
+    El zoom re-renderiza a más/menos DPI, no solo escala el PNG — sigue
+    nítido al acercar (ver `_preview_cacheada`)."""
+    p = f"pe_{id_}_"
+    st.session_state.setdefault(p + "zoom", 100)
+    c_zoom, _c_resto = st.columns([1, 3])
+    with c_zoom:
+        st.selectbox(
+            "Zoom",
+            options=[50, 75, 100, 125, 150, 200],
+            format_func=lambda z: f"Zoom {z}%",
+            key=p + "zoom",
+            label_visibility="collapsed",
+        )
+    definicion_actual = _construir_definicion_desde_widgets(id_, base_id)
+    avisos = validar_plantilla(definicion_actual)
+    for aviso in avisos:
+        st.warning(aviso)
+    try:
+        st.image(
+            _preview_cacheada(definicion_actual, cuenta, st.session_state[p + "zoom"]),
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.error(f"No se pudo generar la vista previa: {e}")
+
+
+def _render_panel_propiedades(id_: str):
+    """Panel derecho: propiedades de UN elemento a la vez (el "activo"),
+    en vez del listado completo de todos los elementos apilados uno tras
+    otro que había antes en "Elementos libres" — se elige con un
+    selectbox, y saltar aquí al añadir/duplicar uno (ver
+    `_agregar_elemento`/`_duplicar_elemento`) es lo que lo hace sentir
+    "seleccionado" como en Canva."""
+    p = f"pe_{id_}_"
+    st.markdown("#### Propiedades")
+    orden = st.session_state.get(p + "elementos_orden", [])
+    if not orden:
+        st.caption(
+            "Todavía no hay elementos libres — añade uno desde la pestaña "
+            "«Insertar», a la izquierda."
+        )
+        return
+
+    activo = st.session_state.get(p + "elemento_activo")
+    if activo not in orden:
+        activo = orden[-1]
+        st.session_state[p + "elemento_activo"] = activo
+
+    opciones = list(reversed(orden))  # más adelante primero, igual que en Capas
+    # Etiquetas precalculadas en un dict plano — nunca un `format_func` que
+    # lea `st.session_state` en vivo dentro del propio lambda: Streamlit (y
+    # su arnés de tests, AppTest) puede volver a invocar `format_func` fuera
+    # del script en ejecución al reconciliar el estado de los widgets, donde
+    # `st.session_state` ya no es la sesión real — un lambda que dependa de
+    # ella ahí produce una etiqueta distinta a la que se mostró al
+    # renderizar y revienta con "value is not in options".
+    etiquetas = {
+        eid: _etiqueta_capa(p + f"el_{eid}_", st.session_state.get(p + f"el_{eid}_tipo", "texto"))
+        for eid in opciones
+    }
+    st.selectbox(
+        "Elemento",
+        options=opciones,
+        format_func=lambda eid: etiquetas.get(eid, eid),
+        key=p + "elemento_activo",
+    )
+    eid_activo = st.session_state[p + "elemento_activo"]
+    _render_elemento(id_, eid_activo, orden.index(eid_activo))
+
+
 def _render_editor(cuenta: dict):
     id_ = st.session_state["plantillas_editando_id"]
     fila = obtener_plantilla(id_)
@@ -1313,223 +1612,22 @@ def _render_editor(cuenta: dict):
         st.button("← Volver a Plantillas", on_click=_cerrar_editor)
         return
     base_id = fila["base_id"]
-    p = f"pe_{id_}_"
 
-    st.caption("🎨 Plantillas")
-    st.markdown(f"## ✏️ Editando: {st.session_state.get(p + 'nombre') or fila['nombre']}")
+    _render_barra_herramientas(id_, base_id)
 
-    c_deshacer, c_rehacer, _c_resto = st.columns([1, 1, 4])
-    with c_deshacer:
-        st.button(
-            "↶ Deshacer",
-            key=p + "deshacer",
-            disabled=not st.session_state.get(p + "undo"),
-            use_container_width=True,
-            on_click=_deshacer,
-            args=(id_,),
-        )
-    with c_rehacer:
-        st.button(
-            "↷ Rehacer",
-            key=p + "rehacer",
-            disabled=not st.session_state.get(p + "redo"),
-            use_container_width=True,
-            on_click=_rehacer,
-            args=(id_,),
-        )
-
-    col_izq, col_der = st.columns([3, 2])
+    col_izq, col_centro, col_der = st.columns([2, 5, 3])
 
     with col_izq:
-        st.text_input("Nombre de la plantilla", key=p + "nombre")
+        tab_diseno, tab_capas, tab_insertar = st.tabs(["🎨 Diseño", "🗂️ Capas", "➕ Insertar"])
+        with tab_diseno:
+            _render_panel_diseno(id_)
+        with tab_capas:
+            _render_panel_capas_tab(id_)
+        with tab_insertar:
+            _render_panel_insertar(id_)
 
-        with st.expander("Tema", expanded=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.checkbox("Usar el color primario de la cuenta", key=p + "cp_heredar")
-                if not st.session_state[p + "cp_heredar"]:
-                    st.color_picker("Color primario", key=p + "cp")
-            with c2:
-                st.checkbox("Usar el color secundario de la cuenta", key=p + "cs_heredar")
-                if not st.session_state[p + "cs_heredar"]:
-                    st.color_picker("Color secundario", key=p + "cs")
-            st.selectbox(
-                "Tipografía",
-                options=list(FUENTES_CATALOGO.keys()),
-                format_func=lambda k: FUENTES_CATALOGO[k]["etiqueta"],
-                key=p + "fuente",
-            )
-            st.slider(
-                "Tamaño de letra base (pt)",
-                TAMANO_FUENTE_MIN_PT,
-                TAMANO_FUENTE_MAX_PT,
-                key=p + "tam_base",
-                step=0.5,
-            )
-            st.selectbox(
-                "Alineación de títulos",
-                options=list(ALINEACIONES),
-                format_func=lambda a: _ETIQUETAS_ALINEACION.get(a, a),
-                key=p + "alin_titulos",
-            )
-
-        with st.expander("Página"):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.selectbox("Tamaño", options=list(TAMANOS_PAGINA), key=p + "pag_tam")
-            with c2:
-                st.selectbox(
-                    "Orientación",
-                    options=list(ORIENTACIONES),
-                    format_func=lambda o: _ETIQUETAS_ORIENTACION.get(o, o),
-                    key=p + "pag_orient",
-                )
-            c3, c4 = st.columns(2)
-            with c3:
-                st.number_input(
-                    "Margen superior (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mS", step=0.1
-                )
-                st.number_input(
-                    "Margen izquierdo (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mIz", step=0.1
-                )
-            with c4:
-                st.number_input(
-                    "Margen inferior (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mI", step=0.1
-                )
-                st.number_input(
-                    "Margen derecho (cm)", MARGEN_MIN_CM, MARGEN_MAX_CM, key=p + "mD", step=0.1
-                )
-
-        with st.expander("Encabezado y pie"):
-            st.checkbox("Mostrar logo", key=p + "logo_mostrar")
-            if st.session_state[p + "logo_mostrar"]:
-                st.slider(
-                    "Tamaño del logo (cm)",
-                    LOGO_ALTO_MIN_CM,
-                    LOGO_ALTO_MAX_CM,
-                    key=p + "logo_alto",
-                    step=0.1,
-                )
-                st.selectbox(
-                    "Posición del logo",
-                    options=list(POSICIONES_LOGO),
-                    format_func=lambda pos: _ETIQUETAS_POSICION_LOGO.get(pos, pos),
-                    key=p + "logo_pos",
-                )
-            st.checkbox("Línea separadora bajo el encabezado", key=p + "enc_linea")
-            st.checkbox("Línea separadora sobre el pie de página", key=p + "pie_linea")
-
-        with st.expander("Estructura (orden y secciones)", expanded=True):
-            st.caption(
-                "Activa o desactiva secciones y cambia su orden con las flechas. "
-                "Las marcadas como obligatorias no se pueden ocultar."
-            )
-            orden = st.session_state[p + "orden"]
-            for i, tipo in enumerate(orden):
-                bloqueada = tipo in SECCIONES_BLOQUEADAS
-                c_check, c_up, c_down = st.columns([5, 1, 1])
-                with c_check:
-                    if bloqueada:
-                        st.checkbox(
-                            f"{ETIQUETAS_SECCION.get(tipo, tipo)} (obligatoria)",
-                            value=True,
-                            disabled=True,
-                            key=p + f"vis_disp_{tipo}",
-                        )
-                        st.session_state[p + f"vis_{tipo}"] = True
-                    else:
-                        st.checkbox(ETIQUETAS_SECCION.get(tipo, tipo), key=p + f"vis_{tipo}")
-                with c_up:
-                    st.button(
-                        "▲",
-                        key=p + f"up_{tipo}",
-                        disabled=(i == 0),
-                        on_click=_mover_seccion,
-                        args=(id_, tipo, -1),
-                        use_container_width=True,
-                    )
-                with c_down:
-                    st.button(
-                        "▼",
-                        key=p + f"down_{tipo}",
-                        disabled=(i == len(orden) - 1),
-                        on_click=_mover_seccion,
-                        args=(id_, tipo, 1),
-                        use_container_width=True,
-                    )
-                if tipo == "servicios":
-                    st.selectbox(
-                        "Cómo mostrar los servicios incluidos",
-                        options=list(LAYOUTS_SERVICIOS),
-                        format_func=lambda layout: _ETIQUETAS_LAYOUT_SERVICIOS.get(layout, layout),
-                        key=p + "serv_layout",
-                    )
-
-        with st.expander("Capas", expanded=bool(st.session_state.get(p + "elementos_orden"))):
-            st.caption(
-                "Orden de apilado de los elementos libres (arriba = más "
-                "adelante). Aquí se controla visibilidad, bloqueo, capa y "
-                "selección para alinear/distribuir; la posición, tamaño y "
-                "estilo de cada uno se editan en «Elementos libres», justo "
-                "abajo."
-            )
-            _render_panel_capas(id_)
-            st.divider()
-            _render_barra_alinear(id_)
-            st.divider()
-            _render_barra_grupo(id_)
-
-        with st.expander("Elementos libres (texto, imágenes, formas)"):
-            st.caption(
-                "Añade bloques de texto propio, imágenes o formas decorativas en "
-                "cualquier posición de la página (x/y desde la esquina superior "
-                "izquierda). Quedan siempre detrás del contenido de la "
-                "cotización — son para fondos, marcas de agua o decoración, no "
-                "para taparla."
-            )
-            orden_el = st.session_state[p + "elementos_orden"]
-            for i, eid in enumerate(orden_el):
-                _render_elemento(id_, eid, i)
-
-            st.markdown("**+ Añadir elemento**")
-            c_tipo, c_add = st.columns([3, 1])
-            with c_tipo:
-                st.selectbox(
-                    "Tipo de elemento nuevo",
-                    options=list(TIPOS_ELEMENTO),
-                    format_func=lambda t: _ETIQUETAS_TIPO_ELEMENTO.get(t, t),
-                    key=p + "nuevo_elemento_tipo",
-                    label_visibility="collapsed",
-                )
-            with c_add:
-                st.button(
-                    "Añadir",
-                    key=p + "btn_add_elemento",
-                    use_container_width=True,
-                    on_click=_agregar_elemento,
-                    args=(id_, st.session_state.get(p + "nuevo_elemento_tipo", "texto")),
-                )
-
-        st.divider()
-        c_guardar, c_volver = st.columns(2)
-        with c_guardar:
-            st.button(
-                "💾 Guardar",
-                type="primary",
-                use_container_width=True,
-                on_click=_guardar_plantilla,
-                args=(id_, base_id),
-            )
-        with c_volver:
-            st.button("← Volver a Plantillas", use_container_width=True, on_click=_cerrar_editor)
+    with col_centro:
+        _render_panel_preview(id_, base_id, cuenta)
 
     with col_der:
-        st.markdown("#### Vista previa")
-        definicion_actual = _construir_definicion_desde_widgets(id_, base_id)
-        avisos = validar_plantilla(definicion_actual)
-        for aviso in avisos:
-            st.warning(aviso)
-        try:
-            st.image(_preview_cacheada(definicion_actual, cuenta), use_container_width=True)
-        except Exception as e:
-            st.error(f"No se pudo generar la vista previa: {e}")
+        _render_panel_propiedades(id_)

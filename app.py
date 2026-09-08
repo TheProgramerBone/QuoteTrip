@@ -83,6 +83,18 @@ if not cuenta.get("tutorial_visto") or st.session_state.get("mostrar_tutorial_ma
     st.session_state["mostrar_tutorial_manual"] = False
     tutorial.mostrar_tutorial()
 
+# ----------------------------------------------------------------------
+# EDITOR DE PLANTILLAS: pantalla completa de verdad — se decide ANTES de
+# construir la barra lateral, no solo antes de las pestañas (bug de la
+# versión anterior: la sidebar con datos del cliente/colores/cuenta se
+# seguía viendo mientras se editaba). Nada de Cotización/Historial/
+# Plantillas/Ayuda ni la sidebar existen en esta rama — el editor ocupa
+# toda la ventana, con su único camino de vuelta ("← Volver a Plantillas").
+# ----------------------------------------------------------------------
+if esta_editando_plantilla():
+    render_editor_plantilla(cuenta)
+    st.stop()
+
 
 def _restaurar_colores():
     """Callback del botón: se ejecuta antes de recrear los selectores de color."""
@@ -223,18 +235,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-# ----------------------------------------------------------------------
-# EDITOR DE PLANTILLAS: pantalla completa, sin la barra de pestañas detrás
-# ----------------------------------------------------------------------
-# Mientras se edita una plantilla, ocultamos por completo
-# Cotización/Historial/Plantillas/Ayuda en vez de dejar el editor enterrado
-# dentro de la pestaña "Plantillas" — así abrir "Editar" se siente como
-# entrar a una pantalla propia, con su único camino de vuelta ("← Volver a
-# Plantillas"), no como un panel más conviviendo con otras tres pestañas.
-if esta_editando_plantilla():
-    render_editor_plantilla(cuenta)
-    st.stop()
 
 st.markdown("## Generador de Cotizaciones")
 

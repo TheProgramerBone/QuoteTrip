@@ -329,12 +329,69 @@ def _guardar_plantilla(id_: str, base_id: str | None):
     st.session_state["plantillas_guardado_ok"] = True
 
 
+# ----------------------------------------------------------------------
+# Deshacer/rehacer (Fase 5 del plan "editor visual")
+# ----------------------------------------------------------------------
+# Cubre las mutaciones ESTRUCTURALES del editor (mover/reordenar secciones
+# o capas, añadir/eliminar/duplicar/agrupar/alinear/mover elementos) —
+# deliberadamente NO cada tecla escrita en un campo de texto o cada click
+# de un color picker: Streamlit no tiene un punto de enganche único donde
+# interceptar esas ediciones sueltas sin envolver cada widget, y la
+# mayoría de editores tipo Canva tampoco deshacen letra por letra. Un
+# snapshot completo (JSON pequeño: una plantilla, no un documento grande)
+# es más simple y suficientemente barato que un patch por campo — "elige
+# la solución sencilla" del plan de fases.
+_UNDO_MAX_HISTORIAL = 30
+
+
+def _snapshot_estado(id_: str) -> str:
+    """El JSON que guarda/restaura el historial. `base_id=None` a
+    propósito: el historial no lo necesita (solo `_guardar_plantilla` lo
+    usa al construir la definición final)."""
+    return _construir_definicion_desde_widgets(id_, None).to_json()
+
+
+def _push_undo(id_: str):
+    """Llamar ANTES de aplicar una mutación estructural: guarda el estado
+    previo en la pila de deshacer y vacía la de rehacer (una acción nueva
+    invalida cualquier "adelante" que hubiera)."""
+    p = f"pe_{id_}_"
+    pila = st.session_state.setdefault(p + "undo", [])
+    pila.append(_snapshot_estado(id_))
+    if len(pila) > _UNDO_MAX_HISTORIAL:
+        del pila[0]
+    st.session_state[p + "redo"] = []
+
+
+def _deshacer(id_: str):
+    p = f"pe_{id_}_"
+    pila = st.session_state.get(p + "undo", [])
+    if not pila:
+        return
+    anterior = pila.pop()
+    redo = st.session_state.setdefault(p + "redo", [])
+    redo.append(_snapshot_estado(id_))
+    _seed_editor_state(id_, TemplateDefinition.from_json(anterior), reset_historial=False)
+
+
+def _rehacer(id_: str):
+    p = f"pe_{id_}_"
+    redo = st.session_state.get(p + "redo", [])
+    if not redo:
+        return
+    siguiente = redo.pop()
+    pila = st.session_state.setdefault(p + "undo", [])
+    pila.append(_snapshot_estado(id_))
+    _seed_editor_state(id_, TemplateDefinition.from_json(siguiente), reset_historial=False)
+
+
 def _mover_seccion(id_: str, tipo: str, direccion: int):
     clave = f"pe_{id_}_orden"
     orden = st.session_state.get(clave, [])
     i = orden.index(tipo)
     j = i + direccion
     if 0 <= j < len(orden):
+        _push_undo(id_)
         orden[i], orden[j] = orden[j], orden[i]
     st.session_state[clave] = orden
 
@@ -354,14 +411,18 @@ def _mover_capa(id_: str, elemento_id: str, direccion: str):
         return
     i = orden.index(elemento_id)
     if direccion == "frente" and i != len(orden) - 1:
+        _push_undo(id_)
         orden.pop(i)
         orden.append(elemento_id)
     elif direccion == "fondo" and i != 0:
+        _push_undo(id_)
         orden.pop(i)
         orden.insert(0, elemento_id)
     elif direccion == "subir" and i < len(orden) - 1:
+        _push_undo(id_)
         orden[i + 1], orden[i] = orden[i], orden[i + 1]
     elif direccion == "bajar" and i > 0:
+        _push_undo(id_)
         orden[i - 1], orden[i] = orden[i], orden[i - 1]
     st.session_state[clave] = orden
 
@@ -461,6 +522,7 @@ def _alinear(id_: str, modo: str):
     seleccion = _elementos_seleccionados(id_)
     if len(seleccion) < 2:
         return
+    _push_undo(id_)
     rects = {eid: _rect_widgets(id_, eid) for eid in seleccion}
     ss = st.session_state
     for eid, (eje, valor) in _posiciones_alineadas(rects, modo).items():
@@ -471,6 +533,7 @@ def _distribuir(id_: str, eje: str):
     seleccion = _elementos_seleccionados(id_)
     if len(seleccion) < 3:
         return
+    _push_undo(id_)
     indice_tamano = 2 if eje == "x" else 3
     indice_pos = 0 if eje == "x" else 1
     items = [
@@ -550,13 +613,18 @@ def _agrupar(id_: str):
     seleccion = _elementos_seleccionados(id_)
     if len(seleccion) < 2:
         return
+    _push_undo(id_)
     nuevo_grupo = uuid.uuid4().hex
     for eid in seleccion:
         st.session_state[f"pe_{id_}_el_{eid}_grupo"] = nuevo_grupo
 
 
 def _desagrupar(id_: str):
-    for eid in _elementos_seleccionados(id_):
+    seleccion = _elementos_seleccionados(id_)
+    if not seleccion:
+        return
+    _push_undo(id_)
+    for eid in seleccion:
         st.session_state[f"pe_{id_}_el_{eid}_grupo"] = None
 
 
@@ -567,6 +635,7 @@ def _duplicar_seleccionados(id_: str):
     seleccion = _elementos_seleccionados(id_)
     if not seleccion:
         return
+    _push_undo(id_)
     grupo_origen = _grupo_comun(id_, seleccion)
     nuevo_grupo = uuid.uuid4().hex if grupo_origen else None
     for eid in seleccion:
@@ -578,10 +647,12 @@ def _mover_seleccion(id_: str, dx: float, dy: float):
     sustituto de "arrastrar un grupo" sin canvas de arrastre: mueve varios
     elementos (agrupados o no) como si fueran una unidad, sin tener que
     editar cada x/y por separado."""
-    if not dx and not dy:
+    seleccion = _elementos_seleccionados(id_)
+    if (not dx and not dy) or not seleccion:
         return
+    _push_undo(id_)
     ss = st.session_state
-    for eid in _elementos_seleccionados(id_):
+    for eid in seleccion:
         ep = f"pe_{id_}_el_{eid}_"
         ss[ep + "x"] = _clamp_posicion(ss.get(ep + "x", 1.0) + dx)
         ss[ep + "y"] = _clamp_posicion(ss.get(ep + "y", 1.0) + dy)
@@ -649,13 +720,22 @@ def _render_barra_grupo(id_: str):
 # ----------------------------------------------------------------------
 # Editor
 # ----------------------------------------------------------------------
-def _seed_editor_state(id_: str, definicion: TemplateDefinition):
+def _seed_editor_state(id_: str, definicion: TemplateDefinition, *, reset_historial: bool = True):
     """Precarga en `session_state` un valor por cada widget del editor,
     ANTES de que esos widgets se rendericen (esta función solo se llama
     desde `on_click=`) — mutar las claves de widgets ya renderizados en el
-    mismo paso de script lanzaría `StreamlitAPIException`."""
+    mismo paso de script lanzaría `StreamlitAPIException`.
+
+    `reset_historial`: `True` (el default, al ABRIR el editor por primera
+    vez desde la biblioteca) vacía las pilas de deshacer/rehacer — un
+    historial de una sesión de edición anterior no debe reaparecer.
+    `_deshacer`/`_rehacer` pasan `False`: ellos mismos gestionan esas
+    pilas, y esta función solo debe repoblar los widgets, no borrarlas."""
     st.session_state["plantillas_editando_id"] = id_
     p = f"pe_{id_}_"
+    if reset_historial:
+        st.session_state[p + "undo"] = []
+        st.session_state[p + "redo"] = []
     st.session_state[p + "nombre"] = definicion.nombre
     st.session_state[p + "cp_heredar"] = definicion.tema.color_primario is None
     st.session_state[p + "cp"] = definicion.tema.color_primario or "#2563EB"
@@ -737,6 +817,7 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
 
 
 def _agregar_elemento(id_: str, tipo: str):
+    _push_undo(id_)
     p = f"pe_{id_}_"
     nuevo_id = uuid.uuid4().hex
     orden = st.session_state.get(p + "elementos_orden", [])
@@ -746,6 +827,7 @@ def _agregar_elemento(id_: str, tipo: str):
 
 
 def _eliminar_elemento(id_: str, elemento_id: str):
+    _push_undo(id_)
     p = f"pe_{id_}_"
     orden = st.session_state.get(p + "elementos_orden", [])
     if elemento_id in orden:
@@ -914,6 +996,7 @@ def _duplicar_elemento(id_: str, eid: str, *, nuevo_grupo_id=Ellipsis) -> str:
 def _duplicar_elemento_simple(id_: str, eid: str):
     """Callback del botón "Duplicar" de un elemento suelto en su
     formulario de detalle — conserva su grupo tal cual si lo tenía."""
+    _push_undo(id_)
     _duplicar_elemento(id_, eid)
 
 
@@ -1234,6 +1317,26 @@ def _render_editor(cuenta: dict):
 
     st.caption("🎨 Plantillas")
     st.markdown(f"## ✏️ Editando: {st.session_state.get(p + 'nombre') or fila['nombre']}")
+
+    c_deshacer, c_rehacer, _c_resto = st.columns([1, 1, 4])
+    with c_deshacer:
+        st.button(
+            "↶ Deshacer",
+            key=p + "deshacer",
+            disabled=not st.session_state.get(p + "undo"),
+            use_container_width=True,
+            on_click=_deshacer,
+            args=(id_,),
+        )
+    with c_rehacer:
+        st.button(
+            "↷ Rehacer",
+            key=p + "rehacer",
+            disabled=not st.session_state.get(p + "redo"),
+            use_container_width=True,
+            on_click=_rehacer,
+            args=(id_,),
+        )
 
     col_izq, col_der = st.columns([3, 2])
 

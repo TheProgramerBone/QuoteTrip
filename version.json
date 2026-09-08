@@ -1,7 +1,7 @@
 {
-  "version": "1.4.6",
+  "version": "1.4.7",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: cada elemento libre ahora puede aplicarse solo a la primera página (portada), a todas menos la primera, o a todas — ideal para una foto de portada grande o una marca de agua desde la página 2."
+  "notas": "Editor de plantillas: deshacer/rehacer (↶/↷) para añadir, eliminar, duplicar, agrupar, alinear, distribuir, mover y reordenar elementos y secciones — por si te equivocas, siempre puedes volver atrás."
 }

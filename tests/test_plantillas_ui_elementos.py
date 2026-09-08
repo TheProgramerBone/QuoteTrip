@@ -359,6 +359,94 @@ def test_reabrir_editor_con_binding_reseed_modo_dinamico():
     assert st.session_state[p + f"el_{eid2}_binding"] == "agencia.nit"
 
 
+def test_deshacer_agregar_elemento():
+    _limpiar_session_state()
+    id_ = "tpl_undo1"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    assert st.session_state[p + "elementos_orden"] == []
+
+    pu._agregar_elemento(id_, "texto")
+    assert len(st.session_state[p + "elementos_orden"]) == 1
+
+    pu._deshacer(id_)
+    assert st.session_state[p + "elementos_orden"] == []
+
+
+def test_rehacer_despues_de_deshacer():
+    _limpiar_session_state()
+    id_ = "tpl_undo2"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._deshacer(id_)
+    assert st.session_state[p + "elementos_orden"] == []
+
+    pu._rehacer(id_)
+    assert len(st.session_state[p + "elementos_orden"]) == 1
+
+
+def test_accion_nueva_invalida_el_rehacer():
+    _limpiar_session_state()
+    id_ = "tpl_undo3"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._deshacer(id_)
+    assert st.session_state[p + "redo"]  # hay algo para rehacer
+
+    pu._agregar_elemento(id_, "forma")  # acción nueva
+    assert st.session_state[p + "redo"] == []
+
+
+def test_deshacer_sin_historial_no_hace_nada():
+    _limpiar_session_state()
+    id_ = "tpl_undo4"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._deshacer(id_)  # no debe lanzar
+    assert st.session_state[p + "elementos_orden"] == []
+
+
+def test_deshacer_conserva_contenido_no_solo_presencia():
+    _limpiar_session_state()
+    id_ = "tpl_undo5"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    (eid,) = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{eid}_x"] = 1.0
+    pu._mover_capa(id_, eid, "frente")  # no-op (ya es el único), pero...
+    pu._agregar_elemento(id_, "forma")  # esto sí genera un punto de undo real
+    a, b = st.session_state[p + "elementos_orden"]
+
+    st.session_state[p + f"el_{a}_x"] = 9.0  # cambio directo, sin pasar por un callback
+    pu._eliminar_elemento(id_, b)  # deshace esto
+    assert len(st.session_state[p + "elementos_orden"]) == 1
+
+    pu._deshacer(id_)
+    orden = st.session_state[p + "elementos_orden"]
+    assert len(orden) == 2  # "forma" vuelve
+
+
+def test_reabrir_editor_resetea_historial():
+    """Abrir el editor de nuevo (reset_historial=True, el default) no debe
+    arrastrar deshacer/rehacer de una sesión de edición anterior."""
+    _limpiar_session_state()
+    id_ = "tpl_undo6"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+    pu._agregar_elemento(id_, "texto")
+    assert st.session_state[p + "undo"]  # hay historial
+
+    pu._seed_editor_state(id_, obtener_preset("clasica"))  # reabrir
+    assert st.session_state[p + "undo"] == []
+    assert st.session_state[p + "redo"] == []
+
+
 def test_seed_desde_definicion_existente_recupera_los_elementos():
     _limpiar_session_state()
     id_ = "tpl_test3"

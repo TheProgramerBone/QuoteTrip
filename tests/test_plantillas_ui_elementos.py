@@ -131,6 +131,90 @@ def test_elemento_bloqueado_se_conserva_al_reconstruir():
     assert definicion.elementos[0].bloqueado is True
 
 
+def test_posiciones_alineadas_izquierda_y_centro():
+    rects = {"a": (0.0, 0.0, 2.0, 1.0), "b": (5.0, 3.0, 4.0, 2.0)}
+    izq = pu._posiciones_alineadas(rects, "izquierda")
+    assert izq["a"] == ("x", 0.0)
+    assert izq["b"] == ("x", 0.0)
+
+    centro = pu._posiciones_alineadas(rects, "centro_h")
+    # bbox x: min=0, max_derecha=max(0+2, 5+4)=9 -> centro=4.5
+    assert centro["a"] == ("x", 4.5 - 1.0)  # 4.5 - ancho/2
+    assert centro["b"] == ("x", 4.5 - 2.0)
+
+
+def test_posiciones_distribuidas_reparte_huecos_iguales():
+    # tres elementos de ancho 2 en x = 0, 4, 10 -> huecos actuales 2 y 4;
+    # tras distribuir deben quedar iguales.
+    items = [("a", 0.0, 2.0), ("b", 4.0, 2.0), ("c", 10.0, 2.0)]
+    resultado = pu._posiciones_distribuidas(items, "x")
+    assert resultado["a"] == 0.0
+    assert resultado["c"] == 10.0
+    # hueco = (12 - 0 - 6) / 2 = 3 -> b queda en 0 + 2 + 3 = 5
+    assert resultado["b"] == 5.0
+
+
+def test_posiciones_distribuidas_requiere_al_menos_tres():
+    assert pu._posiciones_distribuidas([("a", 0.0, 1.0), ("b", 5.0, 1.0)], "x") == {}
+
+
+def test_alinear_mueve_elementos_seleccionados():
+    _limpiar_session_state()
+    id_ = "tpl_align"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_x"] = 1.0
+    st.session_state[p + f"el_{b}_x"] = 5.0
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+
+    pu._alinear(id_, "izquierda")
+    assert st.session_state[p + f"el_{a}_x"] == 1.0
+    assert st.session_state[p + f"el_{b}_x"] == 1.0
+
+
+def test_alinear_ignora_elementos_bloqueados():
+    _limpiar_session_state()
+    id_ = "tpl_align_lock"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_x"] = 1.0
+    st.session_state[p + f"el_{b}_x"] = 5.0
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+    st.session_state[p + f"el_{b}_bloqueado"] = True
+
+    # Con un solo elemento realmente seleccionable, alinear no hace nada.
+    assert pu._elementos_seleccionados(id_) == [a]
+    pu._alinear(id_, "izquierda")
+    assert st.session_state[p + f"el_{b}_x"] == 5.0  # sin tocar
+
+
+def test_distribuir_requiere_tres_seleccionados():
+    _limpiar_session_state()
+    id_ = "tpl_dist"
+    p = f"pe_{id_}_"
+    pu._seed_editor_state(id_, obtener_preset("clasica"))
+
+    pu._agregar_elemento(id_, "texto")
+    pu._agregar_elemento(id_, "forma")
+    a, b = st.session_state[p + "elementos_orden"]
+    st.session_state[p + f"el_{a}_sel"] = True
+    st.session_state[p + f"el_{b}_sel"] = True
+    st.session_state[p + f"el_{b}_x"] = 9.0
+
+    pu._distribuir(id_, "x")
+    assert st.session_state[p + f"el_{b}_x"] == 9.0  # sin cambios, solo 2 seleccionados
+
+
 def test_seed_desde_definicion_existente_recupera_los_elementos():
     _limpiar_session_state()
     id_ = "tpl_test3"

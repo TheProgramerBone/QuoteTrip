@@ -75,7 +75,7 @@ def ruta_logo_cuenta(cuenta: dict) -> str | None:
 
 
 # --- Versión y actualizaciones ---
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 # Para habilitar el aviso de actualización, apunta esta URL a un archivo
 # version.json publicado (por ejemplo en GitHub Releases). Déjalo vacío para
 # desactivar la comprobación. Ver "README Actualizaciones.md".

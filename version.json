@@ -1,7 +1,7 @@
 {
-  "version": "1.4.2",
+  "version": "1.4.3",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: panel «Capas» para los elementos libres — reordénalos con un click (traer al frente/enviar al fondo/subir/bajar un nivel), muéstralos u ocúltalos, y bloquéalos para protegerlos de moverse o borrarse sin querer."
+  "notas": "Editor de plantillas: marca varios elementos libres desde el panel Capas y alinéalos (izquierda/centro/derecha/arriba/medio/abajo) o distribúyelos con espaciado uniforme, todo con un click."
 }

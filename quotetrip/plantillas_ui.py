@@ -358,6 +358,169 @@ def _mover_capa(id_: str, elemento_id: str, direccion: str):
 
 
 # ----------------------------------------------------------------------
+# Selección + alinear/distribuir (Fase 3 del plan "editor visual")
+# ----------------------------------------------------------------------
+def _elementos_seleccionados(id_: str) -> list[str]:
+    """Ids marcados con el checkbox "Sel" del panel Capas, en el mismo
+    orden que `elementos_orden` — excluye siempre los bloqueados, aunque
+    su clave "sel" quedara marcada (p.ej. si se bloqueó el elemento
+    después de seleccionarlo): `_render_panel_capas` ya evita marcar uno
+    bloqueado desde la UI, pero esta función no confía solo en eso."""
+    p = f"pe_{id_}_"
+    ss = st.session_state
+    return [
+        eid
+        for eid in ss.get(p + "elementos_orden", [])
+        if ss.get(p + f"el_{eid}_sel") and not ss.get(p + f"el_{eid}_bloqueado")
+    ]
+
+
+def _bbox(rects) -> tuple[float, float, float, float]:
+    """`rects`: iterable de (x, y, ancho, alto). Devuelve el rectángulo
+    envolvente (min_x, min_y, max_derecha, max_abajo) de todos ellos."""
+    rects = list(rects)
+    min_x = min(r[0] for r in rects)
+    min_y = min(r[1] for r in rects)
+    max_derecha = max(r[0] + r[2] for r in rects)
+    max_abajo = max(r[1] + r[3] for r in rects)
+    return min_x, min_y, max_derecha, max_abajo
+
+
+def _posiciones_alineadas(rects: dict, modo: str) -> dict:
+    """`rects`: {id: (x, y, ancho, alto)}. Devuelve {id: (eje, valor)} — el
+    eje que `modo` no toca ("x" o "y") ni aparece en el resultado, el
+    llamador solo actualiza el que corresponde. Alinea respecto al
+    rectángulo envolvente de la selección (no respecto a la página), igual
+    que la mayoría de editores de diseño al alinear varios objetos entre
+    sí."""
+    min_x, min_y, max_derecha, max_abajo = _bbox(rects.values())
+    centro_x = (min_x + max_derecha) / 2
+    centro_y = (min_y + max_abajo) / 2
+    salida = {}
+    for eid, (x, y, ancho, alto) in rects.items():
+        if modo == "izquierda":
+            salida[eid] = ("x", min_x)
+        elif modo == "derecha":
+            salida[eid] = ("x", max_derecha - ancho)
+        elif modo == "centro_h":
+            salida[eid] = ("x", centro_x - ancho / 2)
+        elif modo == "arriba":
+            salida[eid] = ("y", min_y)
+        elif modo == "abajo":
+            salida[eid] = ("y", max_abajo - alto)
+        elif modo == "centro_v":
+            salida[eid] = ("y", centro_y - alto / 2)
+    return salida
+
+
+def _posiciones_distribuidas(items: list, eje: str) -> dict:
+    """`items`: lista de (id, posición, tamaño) en el eje `eje` ("x" o "y").
+    Reparte huecos iguales entre los bordes más externos, manteniendo fijos
+    el primero y el último (mismo criterio que "Distribuir" en Canva/
+    Figma) — requiere al menos 3 elementos, si no hay huecos que igualar."""
+    if len(items) < 3:
+        return {}
+    ordenados = sorted(items, key=lambda t: t[1])
+    inicio = ordenados[0][1]
+    fin = ordenados[-1][1] + ordenados[-1][2]
+    suma_tamanos = sum(t[2] for t in ordenados)
+    hueco = (fin - inicio - suma_tamanos) / (len(ordenados) - 1)
+    salida = {}
+    cursor = inicio
+    for eid, _, tamano in ordenados:
+        salida[eid] = cursor
+        cursor += tamano + hueco
+    return salida
+
+
+def _clamp_posicion(valor: float) -> float:
+    return round(min(max(valor, 0.0), 60.0), 2)
+
+
+def _rect_widgets(id_: str, eid: str) -> tuple[float, float, float, float]:
+    ep = f"pe_{id_}_el_{eid}_"
+    ss = st.session_state
+    return (
+        ss.get(ep + "x", 1.0),
+        ss.get(ep + "y", 1.0),
+        ss.get(ep + "ancho", 5.0),
+        ss.get(ep + "alto", 2.0),
+    )
+
+
+def _alinear(id_: str, modo: str):
+    seleccion = _elementos_seleccionados(id_)
+    if len(seleccion) < 2:
+        return
+    rects = {eid: _rect_widgets(id_, eid) for eid in seleccion}
+    ss = st.session_state
+    for eid, (eje, valor) in _posiciones_alineadas(rects, modo).items():
+        ss[f"pe_{id_}_el_{eid}_{eje}"] = _clamp_posicion(valor)
+
+
+def _distribuir(id_: str, eje: str):
+    seleccion = _elementos_seleccionados(id_)
+    if len(seleccion) < 3:
+        return
+    indice_tamano = 2 if eje == "x" else 3
+    indice_pos = 0 if eje == "x" else 1
+    items = [
+        (eid, _rect_widgets(id_, eid)[indice_pos], _rect_widgets(id_, eid)[indice_tamano])
+        for eid in seleccion
+    ]
+    ss = st.session_state
+    for eid, valor in _posiciones_distribuidas(items, eje).items():
+        ss[f"pe_{id_}_el_{eid}_{eje}"] = _clamp_posicion(valor)
+
+
+def _render_barra_alinear(id_: str):
+    n = len(_elementos_seleccionados(id_))
+    if n < 2:
+        st.caption(
+            "Marca 2 o más elementos (checkbox «Sel» de cada capa) para "
+            "alinearlos entre sí, o 3+ para distribuirlos."
+        )
+        return
+    st.caption(f"{n} elementos seleccionados")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    botones_align = (
+        (c1, "⬅ Izquierda", "izquierda"),
+        (c2, "↔ Centro", "centro_h"),
+        (c3, "➡ Derecha", "derecha"),
+        (c4, "⬆ Arriba", "arriba"),
+        (c5, "↕ Medio", "centro_v"),
+        (c6, "⬇ Abajo", "abajo"),
+    )
+    for columna, etiqueta, modo in botones_align:
+        with columna:
+            st.button(
+                etiqueta,
+                key=f"pe_{id_}_alinear_{modo}",
+                use_container_width=True,
+                on_click=_alinear,
+                args=(id_, modo),
+            )
+    if n >= 3:
+        d1, d2 = st.columns(2)
+        with d1:
+            st.button(
+                "▭ Distribuir horizontalmente",
+                key=f"pe_{id_}_distribuir_x",
+                use_container_width=True,
+                on_click=_distribuir,
+                args=(id_, "x"),
+            )
+        with d2:
+            st.button(
+                "▯ Distribuir verticalmente",
+                key=f"pe_{id_}_distribuir_y",
+                use_container_width=True,
+                on_click=_distribuir,
+                args=(id_, "y"),
+            )
+
+
+# ----------------------------------------------------------------------
 # Editor
 # ----------------------------------------------------------------------
 def _seed_editor_state(id_: str, definicion: TemplateDefinition):
@@ -418,6 +581,9 @@ def _seed_elemento(p: str, elemento_id: str, tipo: str, e: ElementoLibre | None 
     st.session_state[ep + "rot"] = float(e.rotacion_grados) if e else 0.0
     st.session_state[ep + "vis"] = bool(e.visible) if e else True
     st.session_state[ep + "bloqueado"] = bool(e.bloqueado) if e else False
+    # "sel" (marcado para alinear/distribuir) es puramente del editor — nunca
+    # se guarda en el modelo, siempre arranca sin marcar al (re)abrir.
+    st.session_state[ep + "sel"] = False
     st.session_state[ep + "opacidad"] = float(e.opacidad) if e else 1.0
     if tipo == "texto":
         st.session_state[ep + "texto"] = op.get("texto", "Texto")
@@ -586,7 +752,10 @@ def _render_panel_capas(id_: str):
     de más adelante (se dibuja encima) arriba del todo — al revés de
     `elementos_orden` (que guarda 0 = más atrás, ver `_mover_capa`).
     Visibilidad y bloqueo se controlan aquí; posición/tamaño/estilo se
-    editan en "Elementos libres" más abajo."""
+    editan en "Elementos libres" más abajo. El checkbox "Sel" marca el
+    elemento para las acciones de alinear/distribuir de
+    `_render_barra_alinear`, justo debajo — un bloqueado no se puede
+    marcar (protegido de moverse)."""
     p = f"pe_{id_}_"
     orden = st.session_state.get(p + "elementos_orden", [])
     if not orden:
@@ -601,9 +770,20 @@ def _render_panel_capas(id_: str):
         if ep + "tipo" not in st.session_state:
             continue
         tipo = st.session_state.get(ep + "tipo", "texto")
-        c_nombre, c_vis, c_lock, c_frente, c_sube, c_baja, c_fondo = st.columns(
-            [4, 1, 1, 1, 1, 1, 1]
+        bloqueado = st.session_state.get(ep + "bloqueado", False)
+        if bloqueado:
+            st.session_state[ep + "sel"] = False
+        c_sel, c_nombre, c_vis, c_lock, c_frente, c_sube, c_baja, c_fondo = st.columns(
+            [1, 4, 1, 1, 1, 1, 1, 1]
         )
+        with c_sel:
+            st.checkbox(
+                "Sel",
+                key=ep + "sel",
+                disabled=bloqueado,
+                help="Marcar para alinear/distribuir",
+                label_visibility="collapsed",
+            )
         with c_nombre:
             st.caption(_etiqueta_capa(ep, tipo))
         with c_vis:
@@ -945,11 +1125,14 @@ def _render_editor(cuenta: dict):
         with st.expander("Capas", expanded=bool(st.session_state.get(p + "elementos_orden"))):
             st.caption(
                 "Orden de apilado de los elementos libres (arriba = más "
-                "adelante). Aquí se controla visibilidad, bloqueo y capa; "
-                "la posición, tamaño y estilo de cada uno se editan en "
-                "«Elementos libres», justo abajo."
+                "adelante). Aquí se controla visibilidad, bloqueo, capa y "
+                "selección para alinear/distribuir; la posición, tamaño y "
+                "estilo de cada uno se editan en «Elementos libres», justo "
+                "abajo."
             )
             _render_panel_capas(id_)
+            st.divider()
+            _render_barra_alinear(id_)
 
         with st.expander("Elementos libres (texto, imágenes, formas)"):
             st.caption(

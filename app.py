@@ -15,7 +15,8 @@ from datetime import date
 
 import streamlit as st
 
-from quotetrip import auth, self_update, tutorial
+from quotetrip import auth, self_update, trm, tutorial
+from quotetrip.calculos import formato_cop
 from quotetrip.config import (
     APP_VERSION,
     COLOR_PRIMARIO_DEF,
@@ -137,10 +138,55 @@ with st.sidebar:
     )
 
     st.divider()
+    with st.expander("💱 Moneda y redondeo"):
+        st.session_state.setdefault("moneda_entrada", "COP")
+        st.session_state.setdefault("moneda_salida", "COP")
+        ce1, ce2 = st.columns(2)
+        with ce1:
+            moneda_entrada = st.selectbox(
+                "Ingreso los precios en", ["COP", "USD"], key="moneda_entrada"
+            )
+        with ce2:
+            moneda_salida = st.selectbox("Mostrar el PDF en", ["COP", "USD"], key="moneda_salida")
+
+        if moneda_entrada == "USD" or moneda_salida == "USD":
+            _trm = trm.obtener_trm()
+            if _trm:
+                st.session_state.setdefault("trm_manual", _trm["valor"])
+                origen = " (caché)" if _trm["de_cache"] else ""
+                st.caption(f"TRM del {_trm['fecha']}{origen}: ${formato_cop(_trm['valor'])} COP")
+            else:
+                st.session_state.setdefault("trm_manual", 4000.0)
+                st.warning("No se pudo obtener la TRM automáticamente. Ingrésala a mano:")
+            st.number_input("TRM (COP por 1 USD)", min_value=0.0, step=10.0, key="trm_manual")
+            if st.button("🔄 Actualizar TRM", use_container_width=True):
+                trm.obtener_trm(forzar=True)
+                st.rerun()
+
+        st.divider()
+        st.session_state.setdefault("redondear", False)
+        redondear = st.checkbox("Redondear el valor final por pasajero", key="redondear")
+        if redondear:
+            modo_ui = st.radio(
+                "Modo de redondeo",
+                ["Hacia arriba (10.000 más cercano)", "Precio comercial (terminado en 999)"],
+                key="modo_redondeo_ui",
+            )
+            # "modo_redondeo_valor" no es la key de ningún widget (solo el
+            # radio de arriba lo es) — se puede reescribir libremente en
+            # cada rerun, es lo que lee `cotizacion_ui._redondear_calc`.
+            st.session_state["modo_redondeo_valor"] = (
+                "arriba_10k" if modo_ui.startswith("Hacia arriba") else "psicologico_999"
+            )
+            st.caption("El redondeo solo aplica cuando el PDF se muestra en COP.")
+
+    st.divider()
     with st.expander("⚙️ Datos de la cuenta"):
         auth.panel_editar_cuenta(cuenta)
         st.divider()
         auth.panel_cambiar_password(cuenta)
+        st.divider()
+        auth.panel_ajustes_exportacion(cuenta)
 
     if st.button("🚪 Cerrar sesión", use_container_width=True):
         auth.cerrar_sesion()

@@ -20,6 +20,7 @@ from .db import (
     verificar_password,
     verificar_respuesta_seguridad,
 )
+from .exportar import elegir_carpeta
 from .pdf import guardar_logo_cuenta
 
 _CAMPOS_OBLIGATORIOS_REGISTRO = [
@@ -318,3 +319,26 @@ def panel_cambiar_password(cuenta: dict):
     hash_password, salt_password = hash_secreto(nueva1)
     actualizar_cuenta({"hash_password": hash_password, "salt_password": salt_password})
     st.success("Contraseña actualizada.")
+
+
+def panel_ajustes_exportacion(cuenta: dict):
+    """Carpeta donde guardar los PDF sin preguntar cada vez. Vacío (por
+    defecto) = siempre abrir el diálogo nativo de "Guardar como"."""
+    st.markdown("**📤 Exportación**")
+    actual = cuenta.get("carpeta_exportacion") or ""
+    st.caption(
+        "Carpeta predeterminada para guardar las cotizaciones en PDF. "
+        "Si la dejas vacía, cada vez se pregunta dónde guardar."
+    )
+    st.text_input("Carpeta", value=actual or "(preguntar siempre)", disabled=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📁 Elegir carpeta...", use_container_width=True):
+            carpeta = elegir_carpeta(actual)
+            if carpeta:
+                actualizar_cuenta({"carpeta_exportacion": carpeta})
+                st.rerun()
+    with c2:
+        if actual and st.button("Quitar (preguntar siempre)", use_container_width=True):
+            actualizar_cuenta({"carpeta_exportacion": None})
+            st.rerun()

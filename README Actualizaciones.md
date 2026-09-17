@@ -11,7 +11,7 @@ solo cambian `app.py` y `quotetrip/` (van como archivos sueltos dentro del
 falta bajar de nuevo Python/Streamlit/reportlab/pywebview.
 
 1. La app tiene una versión (`APP_VERSION` en `quotetrip/config.py`, hoy
-   `1.4.0`).
+   `1.5.0`).
 2. Al abrirse, consulta `version.json` publicado en internet (`UPDATE_URL`
    en `quotetrip/config.py`, apunta a `TheProgramerBone/QuoteTrip` en
    GitHub).

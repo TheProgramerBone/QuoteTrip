@@ -1,7 +1,7 @@
 {
   "version": "1.5.0",
   "tipo": "completo",
-  "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest",
-  "sha256": "3ced54548e263e3379f4e99eb3c7a19573c1bd90ade955435247a95ffd31e8b6",
+  "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Setup.exe",
+  "sha256": "175c0996497b84bb1728d101fdfbb2925e0e418471a36ccaf341aa7d5c37e905",
   "notas": "Historial: borrar una cotización individual. Las imágenes adjuntas ahora sobreviven a una recotización. Hoteles: campo de Dirección propio y 'Incluye:' con planes comerciales (Desayuno, Todo Incluido, etc.). Comisión por % o valor fijo (por defecto %), con opción de marcar que el precio ya la incluye. Nuevo botón para previsualizar el PDF antes de exportar. Las fechas de una opción nueva se sincronizan con la última al crearla. Moneda COP/USD con TRM del día (automática, con caché y opción manual). Redondeo opcional del valor final (al siguiente 10.000 o a un precio terminado en 999). Resumen de costo/comisión/ganancia por opción, con ajuste manual del valor final y aviso si se cede comisión. Al exportar, diálogo nativo de Windows para elegir dónde guardar el PDF (o una carpeta predeterminada configurable en Ajustes, para no preguntar siempre)."
 }

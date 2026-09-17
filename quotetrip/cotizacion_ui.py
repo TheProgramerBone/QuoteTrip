@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Pestañas "Cotización" e "Historial": servicios compartidos, opciones
-(pasajeros, fechas, hotel, servicios), cálculo en vivo, el botón "Aplicar y
-Exportar" que arma el PDF y lo guarda en el historial, y la recarga de una
-cotización guardada para editarla / recotizar."""
+(pasajeros, fechas, hotel, servicios), cálculo en vivo, los botones
+"Previsualizar" y "Aplicar y Exportar" que arman el PDF (y lo guardan en el
+historial / en disco), y la recarga de una cotización guardada para
+editarla / recotizar."""
 
+import base64
+import binascii
 import csv
 import io
 import json
@@ -15,16 +18,27 @@ import streamlit as st
 from .calculos import (
     calcular_dias_noches,
     calcular_opcion,
+    convertir_moneda,
     fecha_en_espanol,
     formato_cop,
+    formato_moneda,
     nombre_archivo_seguro,
+    redondear_precio,
     texto_pasajeros,
 )
-from .config import CLAVES_COMPARTIBLES, INCLUSIONES, LOG_PATH, logger
-from .db import borrar_historial, guardar_cotizacion, obtener_historial, obtener_plantilla
+from .config import CLAVES_COMPARTIBLES, INCLUSIONES, LOG_PATH, PERSONALIZADO, PLANES_HOTEL, logger
+from .db import (
+    borrar_cotizacion,
+    borrar_historial,
+    guardar_cotizacion,
+    obtener_historial,
+    obtener_plantilla,
+)
+from .exportar import guardar_pdf
 from .paste_uploader import bytes_pegados, imagen_pegable
 from .pdf import construir_pdf
 from .pdf.presets import PRESET_POR_DEFECTO, es_preset, obtener_preset
+from .pdf.preview import rasterizar_pdf
 from .pdf.resolver import listar_plantillas_disponibles, resolver_plantilla
 
 
@@ -38,6 +52,24 @@ def _bytes_lista(key):
 def _bytes_uno(key):
     f = st.session_state.get(key)
     return f.getvalue() if f else None
+
+
+def _codificar_imagenes(lista_bytes):
+    """Codifica una lista de bytes de imagen a base64 (texto), para poder
+    guardarlas dentro del `datos_json` de la cotización — así sobreviven a
+    una recotización, cosa que un `st.file_uploader` no permite por sí
+    solo (ver `cargar_cotizacion_en_formulario`)."""
+    return [base64.b64encode(b).decode("ascii") for b in lista_bytes if b]
+
+
+def _decodificar_imagenes(lista_b64):
+    resultado = []
+    for b64 in lista_b64 or []:
+        try:
+            resultado.append(base64.b64decode(b64))
+        except (ValueError, binascii.Error):
+            pass
+    return resultado
 
 
 def _render_pegar_vuelos(base_key):
@@ -77,60 +109,328 @@ def _valor_por_defecto(key, valor_def):
     return {} if key in st.session_state else {"value": valor_def}
 
 
+def _indice_por_defecto(key, opciones, valor_def):
+    """Igual que `_valor_por_defecto`, pero para `st.selectbox` — que no
+    acepta `value=`, solo `index=` (la posición dentro de `opciones`)."""
+    if key in st.session_state:
+        return {}
+    try:
+        return {"index": opciones.index(valor_def)}
+    except ValueError:
+        return {}
+
+
+def _moneda_entrada():
+    return st.session_state.get("moneda_entrada", "COP")
+
+
+def _a_cop(valor):
+    """Convierte un número tal como se escribió en el formulario (en la
+    moneda de entrada elegida en la barra lateral) a COP, la moneda interna
+    en la que trabajan `calcular_opcion` y el historial. Si la moneda de
+    entrada es COP, o no hay TRM disponible, lo deja tal cual — nunca
+    revienta por falta de TRM, simplemente no convierte.
+
+    Limitación deliberada: esto NO reconvierte números ya escritos si se
+    cambia la moneda de entrada a mitad de la cotización — cada número se
+    interpreta con la moneda activa en el momento en que se lee (al calcular
+    en vivo o al exportar), no en el momento en que se escribió."""
+    if _moneda_entrada() == "USD":
+        trm = st.session_state.get("trm_manual")
+        if trm:
+            return valor * trm
+    return valor
+
+
+def _plan_por_defecto(desc_def):
+    """A qué plan de `PLANES_HOTEL` corresponde un texto de "Incluye" ya
+    existente (con o sin el prefijo "Hotel X" delante, como el `desc_def`
+    histórico "Hotel Todo Incluido") — "Personalizado" si no calza con
+    ninguno. Misma lógica de detección que usa `_preset_servicio` al
+    recargar una cotización guardada."""
+    if not desc_def:
+        return "Todo Incluido"
+    for plan in PLANES_HOTEL:
+        if plan == PERSONALIZADO:
+            continue
+        if desc_def == plan or desc_def.endswith(f" {plan}") or desc_def.endswith(f": {plan}"):
+            return plan
+    return PERSONALIZADO
+
+
+def _desc_hotel(keyp, hotel_nombre, desc_def):
+    """Campo "Incluye:" del hotel: un selectbox con los planes comerciales
+    habituales (con un ⓘ explicándolos) + "Personalizado" para texto libre.
+    Devuelve el texto final ya armado (con el nombre del hotel delante, como
+    hacía el `desc_def` original)."""
+    plan_def = _plan_por_defecto(desc_def)
+    plan = st.selectbox(
+        "Incluye:",
+        PLANES_HOTEL,
+        key=f"plan_{keyp}",
+        help=(
+            "Plan comercial del hotel. Elige el que aplica o "
+            '"Personalizado" para escribir tu propio texto.'
+        ),
+        **_indice_por_defecto(f"plan_{keyp}", PLANES_HOTEL, plan_def),
+    )
+    if plan == PERSONALIZADO:
+        libre = st.text_input(
+            "Incluye: (personalizado)",
+            key=f"desc_{keyp}",
+            **_valor_por_defecto(f"desc_{keyp}", desc_def),
+        )
+        return libre.strip()
+    return f"Hotel {hotel_nombre.strip()}: {plan}" if hotel_nombre.strip() else plan
+
+
+def _comision_widgets(etiqueta, keyp, monto_cop):
+    """Bloque de comisión de un servicio: % del precio (por defecto) o valor
+    fijo, salvo que "ya tiene comisión" esté marcado, en cuyo caso no se
+    añade nada. `monto_cop` ya debe venir convertido a COP. Devuelve
+    (comision_cop, tipo, valor_tipo) — `valor_tipo` es el % o el monto fijo
+    tal como lo escribió el usuario (en la moneda de entrada), para poder
+    recomponer los mismos widgets al recargar una cotización guardada."""
+    ya_tiene = st.checkbox(
+        "Este precio ya incluye comisión",
+        key=f"yatc_{keyp}",
+        help="Actívalo si el precio ya trae tu comisión sumada — no se añade nada extra.",
+    )
+    if ya_tiene:
+        return 0, "ninguna", 0.0
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        tipo_ui = st.radio(
+            f"Comisión · {etiqueta}",
+            ["% del precio", "Valor fijo"],
+            key=f"comtipo_{keyp}",
+            horizontal=True,
+        )
+    tipo = "pct" if tipo_ui.startswith("%") else "fijo"
+    with cc2:
+        if tipo == "pct":
+            pct = st.number_input(
+                "Comisión (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                key=f"compct_{keyp}",
+                **_valor_por_defecto(f"compct_{keyp}", 0.0),
+            )
+            comision = int(round(monto_cop * pct / 100))
+            valor_tipo = float(pct)
+        else:
+            fijo = st.number_input(
+                f"Comisión ({_moneda_entrada()})",
+                min_value=0,
+                step=10000,
+                key=f"comfijo_{keyp}",
+                **_valor_por_defecto(f"comfijo_{keyp}", 0),
+            )
+            comision = int(round(_a_cop(fijo)))
+            valor_tipo = float(fijo)
+    if comision:
+        st.caption(f"Comisión aplicada: ${formato_cop(comision)}")
+    return comision, tipo, valor_tipo
+
+
 def fila_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
-    """Renderiza un servicio (check + descripción + precio + comisión + base).
-    La comisión se suma al precio. Devuelve dict o None."""
+    """Renderiza un servicio (check + descripción/dirección + precio +
+    comisión + base). La comisión se suma al precio. Devuelve dict o None."""
     if not st.checkbox(etiqueta, key=f"chk_{keyp}"):
         return None
-    if clave == "hotel" and hotel_nombre.strip():
-        desc_def = f"Hotel {hotel_nombre.strip()} Todo Incluido"
-    desc = st.text_input(
-        f"Descripción · {etiqueta}",
-        key=f"desc_{keyp}",
-        **_valor_por_defecto(f"desc_{keyp}", desc_def),
-    )
-    c1, c2, c3 = st.columns(3)
+
+    direccion = ""
+    if clave == "hotel":
+        direccion = st.text_input(
+            "Dirección",
+            key=f"dir_{keyp}",
+            **_valor_por_defecto(f"dir_{keyp}", ""),
+        )
+        if hotel_nombre.strip():
+            desc_def = f"Hotel {hotel_nombre.strip()} Todo Incluido"
+        desc = _desc_hotel(keyp, hotel_nombre, desc_def)
+    else:
+        desc = st.text_input(
+            f"Descripción · {etiqueta}",
+            key=f"desc_{keyp}",
+            **_valor_por_defecto(f"desc_{keyp}", desc_def),
+        )
+
+    c1, c2 = st.columns(2)
     with c1:
         monto = st.number_input(
-            f"Precio · {etiqueta} (COP)",
+            f"Precio · {etiqueta} ({_moneda_entrada()})",
             min_value=0,
             step=50000,
             key=f"cost_{keyp}",
             **_valor_por_defecto(f"cost_{keyp}", 0),
         )
     with c2:
-        comision = st.number_input(
-            f"Comisión · {etiqueta} (COP)",
-            min_value=0,
-            step=10000,
-            key=f"com_{keyp}",
-            help="Se suma al precio de este servicio.",
-            **_valor_por_defecto(f"com_{keyp}", 0),
-        )
-    with c3:
         base = st.selectbox(
             f"Base · {etiqueta}", ["Por pasajero adulto", "Total del grupo"], key=f"base_{keyp}"
         )
+    monto_cop = int(round(_a_cop(monto)))
+    comision, comision_tipo, comision_valor = _comision_widgets(etiqueta, keyp, monto_cop)
     return {
         "clave": clave,
         "etiqueta": etiqueta,
         "desc": desc.strip(),
-        "monto": int(monto),
+        "direccion": direccion.strip(),
+        "monto": monto_cop,
         "comision": int(comision),
+        "comision_tipo": comision_tipo,
+        "comision_valor": comision_valor,
         "base": "persona" if base.startswith("Por") else "total",
     }
 
 
-def _leer_servicio(clave, etiqueta, desc_def, keyp):
+def _leer_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
     b = st.session_state.get(f"base_{keyp}", "Por pasajero adulto")
+    monto_cop = int(round(_a_cop(int(st.session_state.get(f"cost_{keyp}", 0)))))
+
+    if clave == "hotel":
+        plan = st.session_state.get(f"plan_{keyp}", "Todo Incluido")
+        if plan == PERSONALIZADO:
+            desc = (st.session_state.get(f"desc_{keyp}", desc_def) or "").strip()
+        else:
+            desc = f"Hotel {hotel_nombre.strip()}: {plan}" if hotel_nombre.strip() else plan
+        direccion = (st.session_state.get(f"dir_{keyp}", "") or "").strip()
+    else:
+        desc = (st.session_state.get(f"desc_{keyp}", desc_def) or "").strip()
+        direccion = ""
+
+    if st.session_state.get(f"yatc_{keyp}", False):
+        comision, comision_tipo, comision_valor = 0, "ninguna", 0.0
+    else:
+        tipo_ui = st.session_state.get(f"comtipo_{keyp}", "% del precio")
+        if tipo_ui.startswith("%"):
+            comision_tipo = "pct"
+            comision_valor = float(st.session_state.get(f"compct_{keyp}", 0.0))
+            comision = int(round(monto_cop * comision_valor / 100))
+        else:
+            comision_tipo = "fijo"
+            comision_valor = float(st.session_state.get(f"comfijo_{keyp}", 0))
+            comision = int(round(_a_cop(comision_valor)))
+
     return {
         "clave": clave,
         "etiqueta": etiqueta,
-        "desc": (st.session_state.get(f"desc_{keyp}", desc_def) or "").strip(),
-        "monto": int(st.session_state.get(f"cost_{keyp}", 0)),
-        "comision": int(st.session_state.get(f"com_{keyp}", 0)),
+        "desc": desc,
+        "direccion": direccion,
+        "monto": monto_cop,
+        "comision": comision,
+        "comision_tipo": comision_tipo,
+        "comision_valor": comision_valor,
         "base": "persona" if b.startswith("Por") else "total",
     }
+
+
+# ----------------------------------------------------------------------
+# Moneda de salida, redondeo y ajuste manual del valor final — se aplican,
+# en ese orden, sobre el `calc` en COP que devuelve `calcular_opcion`.
+# `_finalizar_calc` es la versión "muda" (sin dibujar nada), usada tanto
+# para el cálculo en vivo como para exportar/previsualizar, así el número
+# final es siempre el mismo por los dos caminos; `_resumen_y_ajuste_ui`
+# dibuja el expander correspondiente (solo tiene sentido en vivo).
+# ----------------------------------------------------------------------
+def _convertir_calc(calc_cop, moneda_salida, trm):
+    calc = dict(calc_cop)
+    for k in (
+        "valor_pasajero",
+        "valor_pasajero_menor",
+        "total_grupo",
+        "costo_total",
+        "comision_total",
+    ):
+        calc[k] = convertir_moneda(calc[k], moneda_salida, trm)
+    return calc
+
+
+def _redondear_calc(calc, moneda_salida):
+    # El redondeo a "múltiplo de 10.000" solo tiene sentido en COP — en USD
+    # sería una granularidad absurda para precios de viajes, así que se
+    # ignora en ese caso (nunca falla, solo no redondea).
+    if st.session_state.get("redondear") and moneda_salida == "COP":
+        modo = st.session_state.get("modo_redondeo_valor", "arriba_10k")
+        calc = dict(calc)
+        for k in ("valor_pasajero", "valor_pasajero_menor", "total_grupo"):
+            calc[k] = redondear_precio(calc[k], modo)
+    return calc
+
+
+def _aplicar_ajuste_manual(oid, calc, personas):
+    ajuste_on_key, ajuste_key = f"ajuste_on_{oid}", f"ajuste_{oid}"
+    if not (st.session_state.get(ajuste_on_key) and ajuste_key in st.session_state):
+        return calc
+    calc = dict(calc)
+    valor_calculado = calc["total_grupo"] if personas > 1 else calc["valor_pasajero"]
+    valor_ajustado = int(st.session_state[ajuste_key])
+    factor = (valor_ajustado / valor_calculado) if valor_calculado else 1
+    if personas > 1:
+        calc["total_grupo"] = valor_ajustado
+        calc["valor_pasajero"] = valor_ajustado / personas
+    else:
+        calc["valor_pasajero"] = valor_ajustado
+        calc["total_grupo"] = valor_ajustado
+    calc["valor_pasajero_menor"] = calc.get("valor_pasajero_menor", 0) * factor
+    return calc
+
+
+def _finalizar_calc(oid, calc_cop, personas):
+    moneda_salida = st.session_state.get("moneda_salida", "COP")
+    trm = st.session_state.get("trm_manual")
+    calc = _convertir_calc(calc_cop, moneda_salida, trm)
+    calc = _redondear_calc(calc, moneda_salida)
+    calc = _aplicar_ajuste_manual(oid, calc, personas)
+    return calc
+
+
+def _resumen_y_ajuste_ui(oid, calc_sin_ajuste, personas):
+    """Dibuja el expander "Resumen y ajuste final" de una opción: costo,
+    comisión/ganancia, y el valor final editable a mano con aviso si el
+    ajuste implica ceder comisión. `calc_sin_ajuste` ya viene convertido a
+    la moneda de salida y redondeado, pero SIN el ajuste manual — así el
+    resumen y el valor por defecto del campo siempre reflejan el cálculo
+    real, nunca un ajuste anterior arrastrado."""
+    moneda_salida = st.session_state.get("moneda_salida", "COP")
+    ajuste_on_key, ajuste_key = f"ajuste_on_{oid}", f"ajuste_{oid}"
+    paso = 10000 if moneda_salida == "COP" else 10
+    valor_calculado = (
+        calc_sin_ajuste["total_grupo"] if personas > 1 else calc_sin_ajuste["valor_pasajero"]
+    )
+    with st.expander("💰 Resumen y ajuste final de precios"):
+        costo_txt = formato_moneda(calc_sin_ajuste["costo_total"], moneda_salida)
+        comision_txt = formato_moneda(calc_sin_ajuste["comision_total"], moneda_salida)
+        st.write(f"Costo (proveedores): {costo_txt}")
+        st.write(f"Comisión / ganancia: {comision_txt}")
+        st.checkbox("Ajustar manualmente el valor final", key=ajuste_on_key)
+        if st.session_state.get(ajuste_on_key):
+            st.number_input(
+                "Valor final" + (" (total del grupo)" if personas > 1 else " (por pasajero)"),
+                min_value=0,
+                step=paso,
+                key=ajuste_key,
+                **_valor_por_defecto(ajuste_key, int(round(valor_calculado))),
+            )
+            valor_ajustado = int(st.session_state.get(ajuste_key, valor_calculado))
+            perdida = valor_calculado - valor_ajustado
+            if perdida > 0:
+                comision_disp = calc_sin_ajuste["comision_total"]
+                if perdida >= comision_disp:
+                    perdida_extra_txt = formato_moneda(perdida - comision_disp, moneda_salida)
+                    st.warning(
+                        "⚠️ Con este ajuste pierdes toda tu comisión "
+                        f"({formato_moneda(comision_disp, moneda_salida)}) y además "
+                        f"{perdida_extra_txt} de tu costo base."
+                    )
+                else:
+                    st.warning(
+                        "⚠️ Con este ajuste tu comisión baja de "
+                        f"{formato_moneda(comision_disp, moneda_salida)} a "
+                        f"{formato_moneda(comision_disp - perdida, moneda_salida)}."
+                    )
 
 
 def _nombre_plantilla_historial(plantilla_id: str | None) -> str:
@@ -148,6 +448,198 @@ def _nombre_plantilla_historial(plantilla_id: str | None) -> str:
     if fila:
         return fila["nombre"]
     return "Personalizada (eliminada)"
+
+
+def _armar_glob(cuenta, cliente, fecha_cotiz, color_primario, color_secundario):
+    return {
+        "cliente": cliente.strip(),
+        "fecha_cotiz_txt": fecha_en_espanol(fecha_cotiz),
+        "color_primario": color_primario,
+        "color_secundario": color_secundario,
+        "razon_social": cuenta.get("razon_social") or "",
+        "nit": cuenta.get("nit") or "",
+        "rnt": cuenta.get("rnt") or "",
+        "ciudad": cuenta.get("ciudad") or "",
+        "telefonos": cuenta.get("telefonos") or "",
+        "contacto": cuenta.get("contacto") or "",
+        "logo_path": cuenta.get("logo_path"),
+        "firma_nombre": cuenta.get("firma_nombre") or "",
+        "firma_cargo": cuenta.get("firma_cargo") or "",
+        "moneda_salida": st.session_state.get("moneda_salida", "COP"),
+    }
+
+
+def _leer_servicios_compartidos(compartir):
+    serv_comp = []
+    if compartir:
+        for clave, etiqueta, desc_def in INCLUSIONES:
+            if clave in CLAVES_COMPARTIBLES and st.session_state.get(f"chk_{clave}_shared"):
+                serv_comp.append(_leer_servicio(clave, etiqueta, desc_def, f"{clave}_shared"))
+    return serv_comp
+
+
+def _reconstruir_opciones(compartir, serv_comp, imgs_vuelos_compartidas):
+    """Reconstruye todas las opciones desde `session_state`: valida fechas y
+    que cada una tenga servicios, calcula sus importes (convertidos a la
+    moneda de salida, con redondeo/ajuste si aplica) y arma tanto los datos
+    para el PDF como el snapshot para el historial. La usan tanto
+    "Previsualizar" como "Aplicar y Exportar" — mismo camino, para que lo
+    que se previsualiza sea exactamente lo que se exporta.
+
+    Devuelve (opciones_pdf, opciones_snapshot, hoteles, valores_desde, error);
+    con `error` no vacío, las otras cuatro vienen vacías."""
+    opciones_pdf, opciones_snapshot = [], []
+    hoteles, valores_desde = [], []
+
+    for i, op in enumerate(st.session_state["opciones"]):
+        oid = op["id"]
+        nombre = st.session_state.get(f"nom_{oid}", f"Opción {i + 1}")
+        ida = st.session_state.get(f"ida_{oid}")
+        reg = st.session_state.get(f"reg_{oid}")
+        if ida and reg and reg < ida:
+            return (
+                [],
+                [],
+                [],
+                [],
+                f"La opción «{nombre}» tiene la fecha de regreso antes que la de ida.",
+            )
+        dias, noches = calcular_dias_noches(ida, reg)
+        adultos = int(st.session_state.get(f"ad_{oid}", 1))
+        menores = int(st.session_state.get(f"me_{oid}", 0))
+        personas = adultos + menores
+        hotel = (st.session_state.get(f"hotel_{oid}", "") or "").strip()
+        tarifa_menor_dif = bool(st.session_state.get(f"tmd_{oid}", False))
+        valor_menor = int(round(_a_cop(int(st.session_state.get(f"vm_{oid}", 0)))))
+
+        serv = []
+        for clave, etiqueta, desc_def in INCLUSIONES:
+            if compartir and clave in CLAVES_COMPARTIBLES:
+                continue
+            if st.session_state.get(f"chk_{clave}_{oid}"):
+                serv.append(
+                    _leer_servicio(
+                        clave,
+                        etiqueta,
+                        desc_def,
+                        f"{clave}_{oid}",
+                        hotel_nombre=hotel if clave == "hotel" else "",
+                    )
+                )
+
+        servicios = serv_comp + serv
+        if not servicios:
+            return [], [], [], [], f"La opción «{nombre}» no tiene servicios marcados."
+
+        calc_cop = calcular_opcion(adultos, menores, tarifa_menor_dif, valor_menor, servicios)
+        calc = _finalizar_calc(oid, calc_cop, personas)
+
+        imgs_vuelos = (
+            imgs_vuelos_compartidas
+            if compartir
+            else _bytes_lista(f"upv_{oid}") + _pegadas_vuelo(f"upv_{oid}")
+        )
+        img_hotel = _bytes_uno(f"uph_{oid}") or bytes_pegados(f"pegar_uph_{oid}")
+        hotel_direccion = next(
+            (s["direccion"] for s in servicios if s["clave"] == "hotel" and s.get("direccion")),
+            "",
+        )
+        moneda_salida = st.session_state.get("moneda_salida", "COP")
+        trm_actual = st.session_state.get("trm_manual")
+        servicios_mostrar = [
+            {
+                **s,
+                "monto": convertir_moneda(s["monto"], moneda_salida, trm_actual),
+                "comision": convertir_moneda(s["comision"], moneda_salida, trm_actual),
+            }
+            for s in servicios
+        ]
+
+        opciones_pdf.append(
+            {
+                "nombre": nombre,
+                "hotel": hotel,
+                "hotel_direccion": hotel_direccion,
+                "ida": ida,
+                "regreso": reg,
+                "dias": dias,
+                "noches": noches,
+                "adultos": adultos,
+                "menores": menores,
+                "tarifa_menor_dif": tarifa_menor_dif,
+                "pasajeros_txt": texto_pasajeros(adultos, menores),
+                "imgs_vuelos_bytes": imgs_vuelos,
+                "img_hotel_bytes": img_hotel,
+                # Lista cruda de servicios (no solo el texto "Incluye: ..."
+                # de `calc`) — habilita el layout de tabla de servicios en
+                # el motor de plantillas. Ya en la moneda de salida elegida.
+                "servicios": servicios_mostrar,
+                **calc,
+            }
+        )
+        opciones_snapshot.append(
+            {
+                "nombre": nombre,
+                "ida": ida.isoformat() if ida else None,
+                "regreso": reg.isoformat() if reg else None,
+                "adultos": adultos,
+                "menores": menores,
+                "hotel": hotel,
+                "tarifa_menor_dif": tarifa_menor_dif,
+                "valor_menor": valor_menor,
+                "servicios": serv,
+                # Imágenes de esta opción, para que sobrevivan a una
+                # recotización — se guardan recién aquí (al exportar).
+                "imgs_vuelos_b64": _codificar_imagenes(
+                    [] if compartir else (_bytes_lista(f"upv_{oid}") + _pegadas_vuelo(f"upv_{oid}"))
+                ),
+                "img_hotel_b64": (_codificar_imagenes([img_hotel])[0] if img_hotel else None),
+            }
+        )
+        if hotel:
+            hoteles.append(hotel)
+        # "Desde" del historial: siempre en COP y sin redondeo/ajuste
+        # manual, para que sea comparable entre cotizaciones sin importar
+        # en qué moneda se exportó cada una — solo ordena/muestra el
+        # historial, no es lo que ve el cliente en el PDF.
+        valores_desde.append(int(round(calc_cop["valor_pasajero"])) or calc_cop["total_grupo"])
+
+    return opciones_pdf, opciones_snapshot, hoteles, valores_desde, None
+
+
+def _agregar_opcion():
+    """Callback de "➕ Agregar opción". Tiene que ser `on_click` (no un
+    `if st.button(...): ...; st.rerun()`): ese patrón MUTABA session_state y
+    llamaba a `st.rerun()` ANTES de que el resto del formulario (las demás
+    opciones, sus widgets) se hubiera vuelto a dibujar en esa misma pasada
+    — `st.rerun()` aborta la pasada ahí mismo, así que Streamlit trataba
+    esos widgets todavía no visitados como "huérfanos" y BORRABA su valor de
+    session_state, perdiendo los datos ya cargados en las demás opciones.
+    Un callback `on_click` corre ANTES de que el próximo rerun (automático,
+    disparado por el propio click) vuelva a instanciar los widgets, que es
+    el único momento seguro para esto — mismo patrón que
+    `cargar_cotizacion_en_formulario`.
+
+    De paso sincroniza las fechas con las de la última opción existente: al
+    crear la opción, arrancan iguales (evita reescribirlas cada vez); una
+    vez creada, cada opción es independiente — si luego se cambian a mano,
+    no se vuelven a tocar entre sí."""
+    nid = st.session_state["next_opt_id"]
+    anteriores = st.session_state["opciones"]
+    if anteriores:
+        oid_previo = anteriores[-1]["id"]
+        if f"ida_{oid_previo}" in st.session_state:
+            st.session_state[f"ida_{nid}"] = st.session_state[f"ida_{oid_previo}"]
+        if f"reg_{oid_previo}" in st.session_state:
+            st.session_state[f"reg_{nid}"] = st.session_state[f"reg_{oid_previo}"]
+    st.session_state["opciones"].append({"id": nid})
+    st.session_state["next_opt_id"] += 1
+
+
+def _eliminar_opcion(oid):
+    """Callback de "🗑 Eliminar" (por la misma razón que `_agregar_opcion`
+    debe ser `on_click`, no `if st.button(...): ...; st.rerun()`)."""
+    st.session_state["opciones"] = [o for o in st.session_state["opciones"] if o["id"] != oid]
 
 
 def render_tab_cotizacion(
@@ -187,11 +679,7 @@ def render_tab_cotizacion(
     with cA:
         st.markdown("### Opciones de la cotización")
     with cB:
-        if st.button("➕  Agregar opción", use_container_width=True):
-            nid = st.session_state["next_opt_id"]
-            st.session_state["opciones"].append({"id": nid})
-            st.session_state["next_opt_id"] += 1
-            st.rerun()
+        st.button("➕  Agregar opción", use_container_width=True, on_click=_agregar_opcion)
 
     opciones = st.session_state["opciones"]
     etiquetas = [f"Opción {i + 1}" for i in range(len(opciones))]
@@ -210,11 +698,14 @@ def render_tab_cotizacion(
                 )
             with top2:
                 st.write("")
-                if len(opciones) > 1 and st.button(
-                    "🗑 Eliminar", key=f"del_{oid}", use_container_width=True
-                ):
-                    st.session_state["opciones"] = [o for o in opciones if o["id"] != oid]
-                    st.rerun()
+                if len(opciones) > 1:
+                    st.button(
+                        "🗑 Eliminar",
+                        key=f"del_{oid}",
+                        use_container_width=True,
+                        on_click=_eliminar_opcion,
+                        args=(oid,),
+                    )
 
             # Fechas de esta opción
             f1, f2 = st.columns(2)
@@ -301,7 +792,7 @@ def render_tab_cotizacion(
                 if tarifa_menor_dif:
                     valor_menor = int(
                         st.number_input(
-                            "Valor por menor (COP)",
+                            f"Valor por menor ({_moneda_entrada()})",
                             min_value=0,
                             step=50000,
                             key=f"vm_{oid}",
@@ -330,23 +821,33 @@ def render_tab_cotizacion(
 
             # ----- Cálculo y resumen en vivo de la opción -----
             servicios = servicios_compartidos + servicios_opcion
-            calc = calcular_opcion(adultos, menores, tarifa_menor_dif, valor_menor, servicios)
+            calc_cop = calcular_opcion(adultos, menores, tarifa_menor_dif, valor_menor, servicios)
+            moneda_salida = st.session_state.get("moneda_salida", "COP")
+            trm = st.session_state.get("trm_manual")
+            calc_convertido = _redondear_calc(
+                _convertir_calc(calc_cop, moneda_salida, trm), moneda_salida
+            )
+            calc = _aplicar_ajuste_manual(oid, calc_convertido, personas)
 
             st.divider()
             r1, r2 = st.columns(2)
             with r1:
-                st.metric("Valor por pasajero", f"${formato_cop(calc['valor_pasajero'])}")
+                st.metric(
+                    "Valor por pasajero", formato_moneda(calc["valor_pasajero"], moneda_salida)
+                )
             with r2:
                 if personas > 1:
                     st.metric(
                         f"Valor total ({personas} pasajeros)",
-                        f"${formato_cop(calc['total_grupo'])}",
+                        formato_moneda(calc["total_grupo"], moneda_salida),
                     )
             if tarifa_menor_dif and menores > 0:
                 st.caption(
-                    f"Valor por pasajero menor: ${formato_cop(calc['valor_pasajero_menor'])}"
+                    f"Valor por pasajero menor: "
+                    f"{formato_moneda(calc['valor_pasajero_menor'], moneda_salida)}"
                 )
             st.info(calc["incluye"])
+            _resumen_y_ajuste_ui(oid, calc_convertido, personas)
 
     st.divider()
 
@@ -376,126 +877,72 @@ def render_tab_cotizacion(
         **kwargs_indice,
     )
 
-    # -------- Botón: generar y exportar --------
-    if st.button("💾  Aplicar y Exportar", type="primary", use_container_width=True):
+    # -------- Botones: previsualizar / generar y exportar --------
+    bcol1, bcol2 = st.columns(2)
+    with bcol1:
+        previsualizar_clic = st.button("👁️  Previsualizar PDF", use_container_width=True)
+    with bcol2:
+        exportar_clic = st.button(
+            "💾  Aplicar y Exportar",
+            type="primary",
+            use_container_width=True,
+            help=(
+                "Si en Ajustes de la cuenta configuraste una carpeta predeterminada, "
+                "el PDF se guarda ahí directo sin preguntar; si no, se abre el "
+                "diálogo de Windows para elegir dónde guardarlo."
+            ),
+        )
+
+    if previsualizar_clic:
+        if not cliente.strip():
+            st.error(
+                "Ingresa el **nombre del cliente** en la barra lateral antes de previsualizar."
+            )
+        else:
+            try:
+                serv_comp = _leer_servicios_compartidos(compartir)
+                opciones_pdf, _, _, _, error = _reconstruir_opciones(
+                    compartir, serv_comp, imgs_vuelos_compartidas
+                )
+                if error:
+                    st.error(error)
+                else:
+                    glob = _armar_glob(
+                        cuenta, cliente, fecha_cotiz, color_primario, color_secundario
+                    )
+                    plantilla = resolver_plantilla(
+                        cuenta, st.session_state.get("plantilla_exportar_id")
+                    )
+                    pdf_bytes = construir_pdf(glob, opciones_pdf, template=plantilla)
+                    st.session_state["pdf_preview_paginas"] = rasterizar_pdf(pdf_bytes)
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.error("Error al previsualizar la cotización: %s\n%s", e, tb)
+                st.error(f"Ocurrió un error al generar la vista previa: {e}")
+
+    if st.session_state.get("pdf_preview_paginas"):
+        with st.expander("👁️ Vista previa del PDF", expanded=True):
+            for idx, png in enumerate(st.session_state["pdf_preview_paginas"]):
+                st.image(png, use_container_width=True, caption=f"Página {idx + 1}")
+            if st.button("Cerrar vista previa"):
+                st.session_state.pop("pdf_preview_paginas", None)
+                st.rerun()
+
+    if exportar_clic:
         if not cliente.strip():
             st.error("Ingresa el **nombre del cliente** en la barra lateral antes de exportar.")
         else:
             try:
-                # Servicios compartidos: iguales para todas las opciones, se leen una sola vez
-                serv_comp = []
-                if compartir:
-                    for clave, etiqueta, desc_def in INCLUSIONES:
-                        if clave in CLAVES_COMPARTIBLES and st.session_state.get(
-                            f"chk_{clave}_shared"
-                        ):
-                            serv_comp.append(
-                                _leer_servicio(clave, etiqueta, desc_def, f"{clave}_shared")
-                            )
-
-                # Reconstruir todas las opciones desde session_state
-                opciones_pdf = []
-                opciones_snapshot = []
-                hoteles, valores_desde = [], []
-                error = None
-
-                for i, op in enumerate(st.session_state["opciones"]):
-                    oid = op["id"]
-                    nombre = st.session_state.get(f"nom_{oid}", f"Opción {i + 1}")
-                    ida = st.session_state.get(f"ida_{oid}")
-                    reg = st.session_state.get(f"reg_{oid}")
-                    if ida and reg and reg < ida:
-                        error = (
-                            f"La opción «{nombre}» tiene la fecha de regreso antes que la de ida."
-                        )
-                        break
-                    dias, noches = calcular_dias_noches(ida, reg)
-                    adultos = int(st.session_state.get(f"ad_{oid}", 1))
-                    menores = int(st.session_state.get(f"me_{oid}", 0))
-                    hotel = (st.session_state.get(f"hotel_{oid}", "") or "").strip()
-                    tarifa_menor_dif = bool(st.session_state.get(f"tmd_{oid}", False))
-                    valor_menor = int(st.session_state.get(f"vm_{oid}", 0))
-
-                    # Servicios propios
-                    serv = []
-                    for clave, etiqueta, desc_def in INCLUSIONES:
-                        if compartir and clave in CLAVES_COMPARTIBLES:
-                            continue
-                        if st.session_state.get(f"chk_{clave}_{oid}"):
-                            serv.append(_leer_servicio(clave, etiqueta, desc_def, f"{clave}_{oid}"))
-
-                    servicios = serv_comp + serv
-                    if not servicios:
-                        error = f"La opción «{nombre}» no tiene servicios marcados."
-                        break
-
-                    calc = calcular_opcion(
-                        adultos, menores, tarifa_menor_dif, valor_menor, servicios
-                    )
-
-                    imgs_vuelos = (
-                        imgs_vuelos_compartidas
-                        if compartir
-                        else _bytes_lista(f"upv_{oid}") + _pegadas_vuelo(f"upv_{oid}")
-                    )
-                    img_hotel = _bytes_uno(f"uph_{oid}") or bytes_pegados(f"pegar_uph_{oid}")
-
-                    opciones_pdf.append(
-                        {
-                            "nombre": nombre,
-                            "hotel": hotel,
-                            "ida": ida,
-                            "regreso": reg,
-                            "dias": dias,
-                            "noches": noches,
-                            "adultos": adultos,
-                            "menores": menores,
-                            "tarifa_menor_dif": tarifa_menor_dif,
-                            "pasajeros_txt": texto_pasajeros(adultos, menores),
-                            "imgs_vuelos_bytes": imgs_vuelos,
-                            "img_hotel_bytes": img_hotel,
-                            # Lista cruda de servicios (no solo el texto
-                            # "Incluye: ..." de `calc`) — habilita el layout
-                            # de tabla de servicios en el motor de plantillas.
-                            "servicios": servicios,
-                            **calc,
-                        }
-                    )
-                    opciones_snapshot.append(
-                        {
-                            "nombre": nombre,
-                            "ida": ida.isoformat() if ida else None,
-                            "regreso": reg.isoformat() if reg else None,
-                            "adultos": adultos,
-                            "menores": menores,
-                            "hotel": hotel,
-                            "tarifa_menor_dif": tarifa_menor_dif,
-                            "valor_menor": valor_menor,
-                            "servicios": serv,
-                        }
-                    )
-                    if hotel:
-                        hoteles.append(hotel)
-                    valores_desde.append(int(round(calc["valor_pasajero"])) or calc["total_grupo"])
-
+                serv_comp = _leer_servicios_compartidos(compartir)
+                opciones_pdf, opciones_snapshot, hoteles, valores_desde, error = (
+                    _reconstruir_opciones(compartir, serv_comp, imgs_vuelos_compartidas)
+                )
                 if error:
                     st.error(error)
                 else:
-                    glob = {
-                        "cliente": cliente.strip(),
-                        "fecha_cotiz_txt": fecha_en_espanol(fecha_cotiz),
-                        "color_primario": color_primario,
-                        "color_secundario": color_secundario,
-                        "razon_social": cuenta.get("razon_social") or "",
-                        "nit": cuenta.get("nit") or "",
-                        "rnt": cuenta.get("rnt") or "",
-                        "ciudad": cuenta.get("ciudad") or "",
-                        "telefonos": cuenta.get("telefonos") or "",
-                        "contacto": cuenta.get("contacto") or "",
-                        "logo_path": cuenta.get("logo_path"),
-                        "firma_nombre": cuenta.get("firma_nombre") or "",
-                        "firma_cargo": cuenta.get("firma_cargo") or "",
-                    }
+                    glob = _armar_glob(
+                        cuenta, cliente, fecha_cotiz, color_primario, color_secundario
+                    )
                     plantilla = resolver_plantilla(
                         cuenta, st.session_state.get("plantilla_exportar_id")
                     )
@@ -508,6 +955,9 @@ def render_tab_cotizacion(
                         "compartir": compartir,
                         "servicios_compartidos": serv_comp,
                         "opciones": opciones_snapshot,
+                        "vuelos_compartidos_b64": (
+                            _codificar_imagenes(imgs_vuelos_compartidas) if compartir else []
+                        ),
                     }
                     guardar_cotizacion(
                         cliente.strip(),
@@ -519,18 +969,40 @@ def render_tab_cotizacion(
                         plantilla_id=plantilla.id,
                         plantilla_snapshot_json=plantilla.to_json(),
                     )
-                    st.session_state["pdf_bytes"] = pdf_bytes
-                    st.session_state["pdf_nombre"] = (
-                        f"Cotizacion_{nombre_archivo_seguro(cliente)}.pdf"
-                    )
                     logger.info(
                         "PDF generado para '%s' con %d opción(es).",
                         cliente.strip(),
                         len(opciones_pdf),
                     )
-                    st.success(
-                        f"Cotización con {len(opciones_pdf)} opción(es) generada y guardada."
-                    )
+                    st.session_state.pop("pdf_preview_paginas", None)
+
+                    nombre_archivo = f"Cotizacion_{nombre_archivo_seguro(cliente)}.pdf"
+                    carpeta_predet = cuenta.get("carpeta_exportacion")
+                    estado, resultado = guardar_pdf(pdf_bytes, nombre_archivo, carpeta_predet)
+                    if estado == "ok":
+                        st.success(
+                            f"Cotización con {len(opciones_pdf)} opción(es) generada y "
+                            f"guardada en:\n\n`{resultado}`"
+                        )
+                        st.session_state.pop("pdf_bytes", None)
+                        st.session_state.pop("pdf_nombre", None)
+                    elif estado == "cancelado":
+                        st.info(
+                            "Guardado cancelado. La cotización ya quedó en el historial; "
+                            "puedes descargar el PDF abajo."
+                        )
+                        st.session_state["pdf_bytes"] = pdf_bytes
+                        st.session_state["pdf_nombre"] = nombre_archivo
+                    elif estado == "sin_tk":
+                        st.success(
+                            f"Cotización con {len(opciones_pdf)} opción(es) generada y guardada."
+                        )
+                        st.session_state["pdf_bytes"] = pdf_bytes
+                        st.session_state["pdf_nombre"] = nombre_archivo
+                    else:  # "error"
+                        st.error(resultado)
+                        st.session_state["pdf_bytes"] = pdf_bytes
+                        st.session_state["pdf_nombre"] = nombre_archivo
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Error al generar la cotización: %s\n%s", e, tb)
@@ -541,7 +1013,7 @@ def render_tab_cotizacion(
 
     if st.session_state.get("pdf_bytes"):
         st.download_button(
-            "⬇️  Exportar PDF",
+            "⬇️  Descargar PDF",
             data=st.session_state["pdf_bytes"],
             file_name=st.session_state["pdf_nombre"],
             mime="application/pdf",
@@ -557,23 +1029,69 @@ def _preset_servicio(keyp, s, desc_def):
     desmarcado si `s` es None) ANTES de que el widget correspondiente se
     vuelva a instanciar en el próximo rerun."""
     st.session_state[f"chk_{keyp}"] = s is not None
-    if s is not None:
+    if s is None:
+        return
+
+    st.session_state[f"cost_{keyp}"] = int(s.get("monto") or 0)
+    st.session_state[f"base_{keyp}"] = (
+        "Por pasajero adulto" if s.get("base") == "persona" else "Total del grupo"
+    )
+
+    if s.get("clave") == "hotel":
+        st.session_state[f"dir_{keyp}"] = s.get("direccion") or ""
+        desc_guardado = s.get("desc") or desc_def
+        # Si el texto guardado coincide con uno de los planes comerciales
+        # (con o sin el prefijo "Hotel X: " delante), se restaura ese plan
+        # en el selectbox en vez de caer siempre en "Personalizado".
+        plan_detectado = _plan_por_defecto(desc_guardado)
+        st.session_state[f"plan_{keyp}"] = plan_detectado
+        if plan_detectado == PERSONALIZADO:
+            st.session_state[f"desc_{keyp}"] = desc_guardado
+    else:
         st.session_state[f"desc_{keyp}"] = s.get("desc") or desc_def
-        st.session_state[f"cost_{keyp}"] = int(s.get("monto") or 0)
-        st.session_state[f"com_{keyp}"] = int(s.get("comision") or 0)
-        st.session_state[f"base_{keyp}"] = (
-            "Por pasajero adulto" if s.get("base") == "persona" else "Total del grupo"
+
+    # Comisión: `comision_tipo` no existe en cotizaciones guardadas antes de
+    # esta función (solo tenían un valor fijo en COP) — se restauran como
+    # "Valor fijo" con ese mismo monto, que es exactamente lo que hacían.
+    comision_tipo = s.get("comision_tipo") or ("fijo" if s.get("comision") else "pct")
+    if comision_tipo == "ninguna":
+        st.session_state[f"yatc_{keyp}"] = True
+    else:
+        st.session_state[f"yatc_{keyp}"] = False
+        st.session_state[f"comtipo_{keyp}"] = (
+            "% del precio" if comision_tipo == "pct" else "Valor fijo"
         )
+        if comision_tipo == "pct":
+            st.session_state[f"compct_{keyp}"] = float(s.get("comision_valor") or 0.0)
+        else:
+            st.session_state[f"comfijo_{keyp}"] = int(
+                s.get("comision_valor") or s.get("comision") or 0
+            )
+
+
+def _restaurar_imagenes_lista(base_key, lista_b64):
+    """Repuebla el acumulado de "capturas pegadas" de `base_key` con
+    imágenes ya guardadas — de aquí en adelante quedan representadas como
+    si se hubieran pegado, que es el único canal de `session_state` que se
+    puede preestablecer por código sin depender de un `file_uploader`
+    (imposible de rellenar programáticamente en Streamlit)."""
+    imgs = _decodificar_imagenes(lista_b64)
+    st.session_state[f"pegar_{base_key}__lista"] = imgs
+    st.session_state[f"pegar_{base_key}__visto"] = imgs[-1] if imgs else None
+
+
+def _restaurar_imagen_hotel(oid, img_b64):
+    if img_b64:
+        st.session_state[f"pegar_uph_{oid}"] = f"data:image/png;base64,{img_b64}"
 
 
 def cargar_cotizacion_en_formulario(datos_json_str: str):
     """Repuebla session_state con una cotización guardada, para editarla o
     recotizar a partir de ella. Reemplaza las opciones actuales del
-    formulario (no se combinan).
-
-    Limitación de Streamlit: las capturas de vuelos/hotel que se subieron NO
-    se pueden re-adjuntar por código a un `file_uploader` — si la
-    recotización las necesita, hay que volver a subirlas."""
+    formulario (no se combinan). Las imágenes que tenía (capturas de vuelos,
+    foto de hotel) se restauran automáticamente si se guardaron con la
+    cotización — las guardadas antes de que existiera esto quedan sin
+    imagen, hay que volver a adjuntarlas."""
     datos = json.loads(datos_json_str)
 
     st.session_state["cliente"] = datos.get("cliente") or ""
@@ -583,7 +1101,10 @@ def cargar_cotizacion_en_formulario(datos_json_str: str):
         st.session_state["cp"] = datos["color_primario"]
     if datos.get("color_secundario"):
         st.session_state["cs"] = datos["color_secundario"]
-    st.session_state["compartir"] = bool(datos.get("compartir"))
+    compartir = bool(datos.get("compartir"))
+    st.session_state["compartir"] = compartir
+    if compartir:
+        _restaurar_imagenes_lista("upv_shared", datos.get("vuelos_compartidos_b64"))
 
     servicios_compartidos = {s["clave"]: s for s in datos.get("servicios_compartidos") or []}
     for clave, etiqueta, desc_def in INCLUSIONES:
@@ -610,6 +1131,9 @@ def cargar_cotizacion_en_formulario(datos_json_str: str):
         st.session_state[f"hotel_{oid}"] = op.get("hotel") or ""
         st.session_state[f"tmd_{oid}"] = bool(op.get("tarifa_menor_dif"))
         st.session_state[f"vm_{oid}"] = int(op.get("valor_menor") or 0)
+        if not compartir:
+            _restaurar_imagenes_lista(f"upv_{oid}", op.get("imgs_vuelos_b64"))
+        _restaurar_imagen_hotel(oid, op.get("img_hotel_b64"))
 
         servicios_opcion = {s["clave"]: s for s in op.get("servicios") or []}
         for clave, etiqueta, desc_def in INCLUSIONES:
@@ -618,9 +1142,11 @@ def cargar_cotizacion_en_formulario(datos_json_str: str):
 
     st.session_state["opciones"] = nuevas_opciones or [{"id": next_id}]
     st.session_state["next_opt_id"] = next_id + (0 if nuevas_opciones else 1)
-    # Limpia el PDF de una exportación previa para no confundirlo con esta recotización
+    # Limpia el PDF/vista previa de una exportación previa para no
+    # confundirlo con esta recotización
     st.session_state.pop("pdf_bytes", None)
     st.session_state.pop("pdf_nombre", None)
+    st.session_state.pop("pdf_preview_paginas", None)
     st.session_state["cotizacion_cargada"] = True
     # NOTA: esta función solo puede llamarse como `on_click` de un botón (no
     # después de un `if st.button(...):`) — muta claves que ya son de otros
@@ -639,8 +1165,8 @@ def render_tab_historial():
     if st.session_state.pop("cotizacion_cargada", False):
         st.success(
             "Cotización cargada. Ve a la pestaña **📝 Cotización** para verla, editarla "
-            "y volver a exportarla. Si tenía capturas de vuelos u hotel, hay que "
-            "volver a subirlas — Streamlit no permite re-adjuntarlas por código."
+            "y volver a exportarla. Las imágenes que tenía (si se guardaron con ella) "
+            "ya quedaron restauradas."
         )
 
     registros = obtener_historial()
@@ -683,6 +1209,26 @@ def render_tab_historial():
                         )
                     else:
                         st.caption("No editable (antigua)")
+                    if st.button("🗑 Borrar", key=f"borrar_{f['id']}", use_container_width=True):
+                        st.session_state[f"confirmar_borrar_{f['id']}"] = True
+
+                if st.session_state.get(f"confirmar_borrar_{f['id']}"):
+                    st.warning(
+                        f"¿Borrar la cotización del {f['fecha_cotiz']}? No se puede deshacer."
+                    )
+                    cd1, cd2 = st.columns(2)
+                    if cd1.button(
+                        "Sí, borrar",
+                        key=f"borrar_si_{f['id']}",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        borrar_cotizacion(f["id"])
+                        st.session_state.pop(f"confirmar_borrar_{f['id']}", None)
+                        st.rerun()
+                    if cd2.button("Cancelar", key=f"borrar_no_{f['id']}", use_container_width=True):
+                        st.session_state.pop(f"confirmar_borrar_{f['id']}", None)
+                        st.rerun()
                 st.divider()
 
     # -------- Tabla completa + CSV + vaciar historial --------

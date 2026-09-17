@@ -12,6 +12,7 @@ CLAUDE.local.md
 # --- Artefactos de compilacion (se regeneran; NO van al repo) ---
 build/
 dist/
+referencias
 
 # --- Datos locales: base de datos, historial y logs (NO subir) ---
 data/

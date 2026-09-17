@@ -31,6 +31,12 @@ for paquete in ("streamlit", "reportlab", "pypdfium2"):
 hiddenimports += ["PIL", "PIL.Image"]
 hiddenimports += collect_submodules("reportlab")
 
+# tkinter (quotetrip/exportar.py: diálogo nativo de "Guardar como" y de
+# "Elegir carpeta") — de la librería estándar, pero como quotetrip/ viaja
+# como dato suelto (ver nota arriba sobre app.py), PyInstaller no lo detecta
+# solo. Declararlo aquí basta para que su hook incluido bundle Tcl/Tk.
+hiddenimports += ["tkinter", "tkinter.filedialog"]
+
 # Metadata que Streamlit y compañía consultan por importlib.metadata
 for paquete in ("streamlit", "click", "rich", "packaging", "protobuf",
                 "tornado", "watchdog", "gitpython", "blinker", "cachetools",

@@ -1,16 +1,19 @@
 @echo off
 REM ============================================================
 REM  Genera el instalador QuoteTrip-Setup.exe
-REM  Paso 1: compila la app con PyInstaller (si hace falta)
+REM  Paso 1: compila la app con PyInstaller (SIEMPRE, no solo si
+REM          falta dist\QuoteTrip — antes se saltaba este paso
+REM          si ya existia un build viejo de una sesion anterior,
+REM          y el instalador terminaba empaquetando codigo
+REM          desactualizado con la version nueva solo por fuera.
+REM          build_exe.bat ya usa --clean, así que recompilar no
+REM          hace daño aunque no haya cambiado nada.)
 REM  Paso 2: compila el instalador con Inno Setup
 REM ============================================================
 cd /d "%~dp0"
 
 REM --- Paso 1: build de PyInstaller ---
-if not exist "dist\QuoteTrip\QuoteTrip.exe" (
-  echo No existe el ejecutable. Compilando la app primero...
-  call build_exe.bat
-)
+call build_exe.bat
 if not exist "dist\QuoteTrip\QuoteTrip.exe" (
   echo ERROR: no se pudo compilar la app. Revisa build_exe.bat.
   pause & exit /b 1

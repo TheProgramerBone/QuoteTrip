@@ -15,7 +15,7 @@ responsabilidad exclusiva de la validación, no del render."""
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, Spacer, Table
 
-from ...calculos import formato_cop
+from ...calculos import formato_moneda
 from ...config import NOTA_Y_LEGAL
 from ..images import _imagen_flowable, preparar_imagen
 from .fonts import nombre_fuente
@@ -59,6 +59,8 @@ def _render_hotel_fechas(ctx, cfg):
     flowables = []
     if partes:
         flowables.append(Paragraph("  ·  ".join(partes), ctx.estilos["hotel_fechas"]))
+    if op.get("hotel_direccion"):
+        flowables.append(Paragraph(f"Dirección: {op['hotel_direccion']}", ctx.estilos["pasajeros"]))
     # Espaciado fijo tras el bloque, igual que el motor legado.
     flowables.append(Spacer(1, 0.2 * cm))
     return flowables
@@ -66,19 +68,20 @@ def _render_hotel_fechas(ctx, cfg):
 
 def _render_precios(ctx, cfg):
     op = ctx.op
+    moneda = ctx.glob.get("moneda_salida", "COP")
     flowables = []
     tarifa_dif = op.get("tarifa_menor_dif") and op.get("menores", 0) > 0
     if tarifa_dif:
         flowables.append(
             Paragraph(
-                f"Valor por pasajero adulto: ${formato_cop(op['valor_pasajero'])}",
+                f"Valor por pasajero adulto: {formato_moneda(op['valor_pasajero'], moneda)}",
                 ctx.estilos["precios"],
             )
         )
         flowables.append(
             Paragraph(
                 f"Valor por pasajero menor (12 años o menos): "
-                f"${formato_cop(op['valor_pasajero_menor'])}",
+                f"{formato_moneda(op['valor_pasajero_menor'], moneda)}",
                 # Reutiliza el estilo "pasajeros" (gris, centrado, pequeño):
                 # visualmente idéntico al `est_sub` que usaba el motor
                 # legado para esta misma línea.
@@ -88,14 +91,15 @@ def _render_precios(ctx, cfg):
     else:
         flowables.append(
             Paragraph(
-                f"VALOR TOTAL X PASAJERO: ${formato_cop(op['valor_pasajero'])}",
+                f"VALOR TOTAL X PASAJERO: {formato_moneda(op['valor_pasajero'], moneda)}",
                 ctx.estilos["precios"],
             )
         )
     if op["personas"] > 1:
         flowables.append(
             Paragraph(
-                f"VALOR TOTAL {op['personas']} PASAJEROS: ${formato_cop(op['total_grupo'])}",
+                f"VALOR TOTAL {op['personas']} PASAJEROS: "
+                f"{formato_moneda(op['total_grupo'], moneda)}",
                 ctx.estilos["precios_grupo"],
             )
         )
@@ -104,14 +108,15 @@ def _render_precios(ctx, cfg):
 
 def _render_servicios(ctx, cfg):
     op = ctx.op
+    moneda = ctx.glob.get("moneda_salida", "COP")
     layout = (cfg.opciones or {}).get("layout", "text")
     servicios = op.get("servicios")
     if layout == "table" and servicios:
         filas = [["Servicio", "Valor"]]
         for s in servicios:
-            monto_total = int(s.get("monto", 0)) + int(s.get("comision", 0))
+            monto_total = s.get("monto", 0) + s.get("comision", 0)
             desc = s.get("desc") or s.get("etiqueta") or ""
-            filas.append([desc, f"${formato_cop(monto_total)}"])
+            filas.append([desc, formato_moneda(monto_total, moneda)])
         tabla = Table(filas, colWidths=[ctx.ancho_util * 0.72, ctx.ancho_util * 0.28])
         tabla.setStyle(construir_tabla_servicios_style(ctx.color_primario))
         return [tabla, Spacer(1, 10)]

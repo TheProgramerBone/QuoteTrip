@@ -106,3 +106,21 @@ def renderizar_previsualizacion(template, cuenta: dict, pagina: int = 0, dpi: in
     igual."""
     pdf_bytes = renderizar_plantilla(template, _glob_de_muestra(cuenta), _opciones_de_muestra())
     return _rasterizar_pagina(pdf_bytes, pagina, dpi)
+
+
+def rasterizar_pdf(pdf_bytes: bytes, dpi: int = 110) -> list[bytes]:
+    """Rasteriza TODAS las páginas de un PDF ya generado (el real, no uno de
+    muestra) a una lista de PNG bytes — usado por el botón "Previsualizar"
+    antes de exportar, para mostrar exactamente lo que va a salir sin tener
+    que guardarlo primero."""
+    documento = pdfium.PdfDocument(pdf_bytes)
+    try:
+        paginas_png = []
+        for pagina in documento:
+            bitmap = pagina.render(scale=dpi / 72.0)
+            buf = io.BytesIO()
+            bitmap.to_pil().save(buf, format="PNG")
+            paginas_png.append(buf.getvalue())
+        return paginas_png
+    finally:
+        documento.close()

@@ -18,6 +18,10 @@ _CAMPOS_ENCABEZADO = {
     "nit": ("nit", False),
     "rnt": ("rnt", False),
 }
+# Etiqueta a anteponer al valor de las líneas no principales — un NIT/RNT
+# sin etiquetar es ambiguo en cualquier plantilla, así que esto aplica
+# siempre, no solo en "Clásica".
+_ETIQUETAS_ENCABEZADO = {"nit": "NIT", "rnt": "RNT"}
 _CAMPOS_PIE = {"ciudad": "ciudad", "telefonos": "telefonos", "contacto": "contacto"}
 
 
@@ -72,13 +76,23 @@ def construir_encabezado_pie(glob: dict, template):
             valor = glob.get(campo)
             if not valor:
                 continue
+            etiqueta = _ETIQUETAS_ENCABEZADO.get(clave)
+            # Algunas cuentas ya escriben la etiqueta como parte del propio
+            # dato (ej. "NIT 900.123.456-7", como sugiere el placeholder de
+            # `auth.py`); otras guardan solo el número pelado. Evita
+            # duplicarla ("NIT: NIT 900...") cuando ya está presente.
+            if etiqueta and not valor.strip().upper().startswith(etiqueta.upper()):
+                texto = f"{etiqueta}: {valor}"
+            else:
+                texto = valor
             if es_principal:
-                canvas.setFillColor(c_sec)
+                color_principal = c_prim if encabezado.color_razon_social == "primario" else c_sec
+                canvas.setFillColor(color_principal)
                 canvas.setFont("Helvetica-Bold", 10)
             else:
                 canvas.setFillColor(colors.HexColor("#333333"))
                 canvas.setFont("Helvetica", 9)
-            canvas.drawRightString(ancho - doc.rightMargin, top_y - linea_actual * 0.42 * cm, valor)
+            canvas.drawRightString(ancho - doc.rightMargin, top_y - linea_actual * 0.42 * cm, texto)
             linea_actual += 1
 
         if encabezado.mostrar_linea_separadora:
@@ -94,10 +108,22 @@ def construir_encabezado_pie(glob: dict, template):
         canvas.setFillColor(colors.HexColor("#444444"))
         canvas.setFont("Helvetica", 8.5)
         cy = 2.05 * cm
-        lineas_pie = [glob.get(_CAMPOS_PIE[c]) for c in pie.lineas if c in _CAMPOS_PIE]
-        lineas_pie = [linea for linea in lineas_pie if linea]
+        # Cada campo puede traer varias líneas reales (\n) — p.ej. una
+        # cuenta que quiera mostrar dos oficinas o el bloque completo de
+        # contacto del diseño original, no solo un dato por campo.
+        lineas_pie = []
+        for c in pie.lineas:
+            valor = glob.get(_CAMPOS_PIE.get(c))
+            if not valor:
+                continue
+            lineas_pie.extend(sub.strip() for sub in valor.split("\n") if sub.strip())
+        paso = (
+            min(0.38 * cm, 1.2 * cm / max(1, len(lineas_pie) - 1))
+            if len(lineas_pie) > 4
+            else 0.38 * cm
+        )
         for i, linea in enumerate(lineas_pie):
-            canvas.drawCentredString(ancho / 2.0, cy - i * 0.38 * cm, linea)
+            canvas.drawCentredString(ancho / 2.0, cy - i * paso, linea)
 
         canvas.restoreState()
 

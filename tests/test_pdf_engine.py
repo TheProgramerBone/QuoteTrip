@@ -6,8 +6,10 @@ secciones ocultas/reordenadas funciona, cotizaciones largas (varias
 páginas) no rompen, el layout de tabla de servicios funciona, y la firma
 histórica sin `template` (regresión) sigue funcionando."""
 
+import base64
 import io
 
+from PIL import Image
 from pypdf import PdfReader
 
 from quotetrip.pdf import construir_pdf
@@ -307,3 +309,172 @@ def test_plantilla_sin_secciones_se_autocompleta_con_bloqueadas(glob_de_prueba, 
 def test_seccion_config_opciones_layout_por_defecto_es_texto():
     s = SeccionConfig(tipo="servicios")
     assert s.opciones.get("layout", "text") == "text"
+
+
+# ----------------------------------------------------------------------
+# Clásica: foto de hotel lateral + encabezado/pie (parecido al diseño
+# original en referencias/)
+# ----------------------------------------------------------------------
+_PNG_1X1_BYTES = base64.b64decode(_PNG_1X1_B64)
+
+
+def _img_bytes(ancho, alto, color=(120, 130, 140)):
+    """PNG de prueba con una proporción realista (a diferencia del PNG 1x1,
+    que al escalarlo a ancho/alto completos produce un cuadrado gigante
+    poco representativo de una foto o una captura de itinerario real)."""
+    buf = io.BytesIO()
+    Image.new("RGB", (ancho, alto), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_clasica_foto_hotel_va_junto_al_texto_no_duplicada(glob_de_prueba, opcion_de_prueba):
+    """En Clásica, con foto de hotel Y captura de vuelos, la foto del hotel
+    no debe repetirse (ya se muestra junto al texto vía
+    `hotel_fechas.opciones.foto_lateral`; la sección "anexos" reubicada
+    debajo del hotel solo aporta la captura de vuelos) — 2 imágenes en
+    total, no 3."""
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba()
+    op["img_hotel_bytes"] = _img_bytes(1200, 800)
+    op["imgs_vuelos_bytes"] = [_img_bytes(1600, 300)]
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    assert pdf_bytes[:5] == b"%PDF-"
+    lector = PdfReader(io.BytesIO(pdf_bytes))
+    assert sum(len(list(p.images)) for p in lector.pages) == 2
+
+
+def test_clasica_vuelos_van_entre_hotel_y_precio_sin_titulo_anexos(
+    glob_de_prueba, opcion_de_prueba
+):
+    """En Clásica, la sección "anexos" queda reubicada justo debajo del
+    bloque de hotel (antes de precios/servicios/nota/firma, como en el
+    original) y sin el rótulo "Anexos"/"Itinerario de vuelos" — el
+    original no lo tiene, es solo la tabla de vuelos sola."""
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba()
+    op["imgs_vuelos_bytes"] = [_img_bytes(1600, 300)]
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert "Anexos" not in texto
+    assert "Itinerario de vuelos" not in texto
+    # "Noches:" (última línea del bloque de hotel) antes que "VALOR TOTAL"
+    # (precios) — los vuelos (imagen, sin texto propio) quedan entre medio.
+    assert texto.index("Noches:") < texto.index("VALOR TOTAL")
+    # La firma sigue siendo lo último, después de precios/servicios/nota.
+    assert texto.index("VALOR TOTAL") < texto.index("Cordialmente")
+
+
+def test_clasica_sin_foto_hotel_sigue_funcionando(glob_de_prueba, opcion_de_prueba):
+    """Sin `img_hotel_bytes`, el comportamiento de `hotel_fechas` es
+    idéntico al de siempre (texto centrado, sin tabla de 2 columnas)."""
+    clasica = obtener_preset("clasica")
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [opcion_de_prueba()])
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(PdfReader(io.BytesIO(pdf_bytes)).pages) == 1
+
+
+def test_preset_profesional_sigue_mostrando_foto_hotel_en_anexos(glob_de_prueba, opcion_de_prueba):
+    """Regresión: un preset sin `foto_lateral`/`incluir_foto_hotel`
+    configurados (todos menos Clásica) no cambia de comportamiento — la
+    foto del hotel se sigue mostrando en "Anexos", como siempre."""
+    profesional = obtener_preset("profesional")
+    op = opcion_de_prueba()
+    op["img_hotel_bytes"] = _PNG_1X1_BYTES
+    pdf_bytes = renderizar_plantilla(profesional, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert "Hotel" in texto.split("Anexos", 1)[-1]
+
+
+def test_clasica_pasajeros_se_fusiona_con_habitaciones(glob_de_prueba, opcion_de_prueba):
+    """En Clásica, la sección "pasajeros" separada va oculta — la cantidad
+    de habitaciones y los pasajeros se fusionan en una sola línea junto al
+    hotel, como en el diseño original ("1 habitación, 1 adulto, 1
+    menor"), no con el texto de `pasajeros_txt` (que trae "Pasajeros: "/
+    "· N pasajeros", pensado para la sección independiente)."""
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba(adultos=2, menores=1)
+    op["hotel_habitaciones"] = 2
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert "Pasajeros:" not in texto  # la sección "pasajeros" está oculta en Clásica
+    assert "2 habitaciones, 2 adultos, 1 menor" in texto
+
+
+def test_clasica_una_habitacion_y_sin_menores(glob_de_prueba, opcion_de_prueba):
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba(adultos=3, menores=0)  # sin hotel_habitaciones -> default 1
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert "1 habitación, 3 adultos, sin menores" in texto
+
+
+def test_clasica_noches_en_su_propia_linea(glob_de_prueba, opcion_de_prueba):
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba()
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert f"Noches: {op['noches']}" in texto
+    # Ya no va fusionado en la misma línea que el rango de fechas.
+    assert f"Días / {op['noches']} Noches" not in texto
+
+
+def test_clasica_acomodacion_aparece_si_esta_presente(glob_de_prueba, opcion_de_prueba):
+    clasica = obtener_preset("clasica")
+    op = opcion_de_prueba()
+    op["hotel_acomodacion"] = "Doble Estándar"
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [op])
+    assert "Doble Estándar" in _texto(pdf_bytes)
+
+
+def test_clasica_sin_acomodacion_no_rompe(glob_de_prueba, opcion_de_prueba):
+    clasica = obtener_preset("clasica")
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [opcion_de_prueba()])
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_otro_preset_conserva_seccion_pasajeros_y_formato_compacto(
+    glob_de_prueba, opcion_de_prueba
+):
+    """Regresión: fuera de Clásica, "pasajeros" sigue visible y
+    "hotel_fechas" sigue en su formato compacto de una sola línea."""
+    profesional = obtener_preset("profesional")
+    op = opcion_de_prueba()
+    pdf_bytes = renderizar_plantilla(profesional, glob_de_prueba, [op])
+    texto = _texto(pdf_bytes)
+    assert "Pasajeros:" in texto
+    assert f"{op['dias']} Días / {op['noches']} Noches" in texto
+
+
+def test_pie_de_pagina_admite_varias_lineas_por_campo(glob_de_prueba, opcion_de_prueba):
+    """Un campo de cuenta con saltos de línea reales (ej. dos oficinas)
+    debe dibujarse como varias líneas del pie, no como una sola con el
+    `\\n` literal perdido."""
+    glob_de_prueba["ciudad"] = "Oficina Bucaramanga\nOficina Miami"
+    clasica = obtener_preset("clasica")
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [opcion_de_prueba()])
+    texto = _texto(pdf_bytes)
+    assert "Oficina Bucaramanga" in texto
+    assert "Oficina Miami" in texto
+
+
+def test_encabezado_etiqueta_nit_rnt_sin_duplicar(glob_de_prueba, opcion_de_prueba):
+    """NIT/RNT llevan su etiqueta si el dato no la trae ya, y no se
+    duplica si el dato ya la incluye (convención sugerida por el
+    placeholder de `auth.py`)."""
+    clasica = obtener_preset("clasica")
+    glob_de_prueba["nit"] = "901.216.427-8"  # sin la palabra "NIT"
+    glob_de_prueba["rnt"] = "RNT 12345"  # ya la trae
+    pdf_bytes = renderizar_plantilla(clasica, glob_de_prueba, [opcion_de_prueba()])
+    texto = _texto(pdf_bytes)
+    assert "NIT: 901.216.427-8" in texto
+    assert "RNT 12345" in texto
+    assert "NIT: RNT 12345" not in texto
+
+
+def test_clasica_nombre_empresa_usa_color_primario():
+    """`color_razon_social` de Clásica es "primario" — otros presets no lo
+    fijan y mantienen el default "secundario"."""
+    clasica = obtener_preset("clasica")
+    assert clasica.encabezado.color_razon_social == "primario"
+    for preset_id in ("profesional", "minimalista", "premium", "travel"):
+        assert obtener_preset(preset_id).encabezado.color_razon_social == "secundario"

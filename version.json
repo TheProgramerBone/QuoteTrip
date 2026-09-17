@@ -1,7 +1,7 @@
 {
-  "version": "1.5.0",
-  "tipo": "completo",
+  "version": "1.5.1",
+  "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Setup.exe",
-  "sha256": "15797ca686fb03d6aab0dad6104b51ebe37accc2e9402d1dbdf10badb5263f56",
-  "notas": "Historial: borrar una cotización individual. Las imágenes adjuntas ahora sobreviven a una recotización. Hoteles: campo de Dirección propio y 'Incluye:' con planes comerciales (Desayuno, Todo Incluido, etc.). Comisión por % o valor fijo (por defecto %), con opción de marcar que el precio ya la incluye. Nuevo botón para previsualizar el PDF antes de exportar. Las fechas de una opción nueva se sincronizan con la última al crearla. Moneda COP/USD con TRM del día (automática, con caché y opción manual). Redondeo opcional del valor final (al siguiente 10.000 o a un precio terminado en 999). Resumen de costo/comisión/ganancia por opción, con ajuste manual del valor final y aviso si se cede comisión. Al exportar, diálogo nativo de Windows para elegir dónde guardar el PDF (o una carpeta predeterminada configurable en Ajustes, para no preguntar siempre)."
+  "sha256": "3b9ed6b69ae1c9d60fc3497ff66eaa479f40454fd0ae3599b12996a178b5a69a",
+  "notas": "Plantilla Clásica, más fiel al diseño original: la foto del hotel va junto al texto (antes salía en una página aparte al final), el bloque de hotel muestra nombre y acomodación en color secundario, dirección, cantidad de habitaciones (nuevo campo) fusionada con los pasajeros, y noches en su propia línea. La captura del itinerario de vuelos ahora va justo debajo del bloque de hotel (antes de precio/incluye/nota), sin el rótulo \"Anexos\", y la firma vuelve a ser lo último — todo pensado para que cada opción quepa en una sola página. Pie de página admite varias líneas por campo (para el bloque completo de contacto: oficinas, teléfonos, email, redes). NIT y RNT llevan su etiqueta en el encabezado, y el nombre de la empresa usa el color primario de la cuenta en vez del secundario."
 }

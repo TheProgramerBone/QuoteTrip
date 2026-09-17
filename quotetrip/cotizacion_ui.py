@@ -242,12 +242,30 @@ def fila_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
         return None
 
     direccion = ""
+    habitaciones = 1
+    acomodacion = ""
     if clave == "hotel":
         direccion = st.text_input(
             "Dirección",
             key=f"dir_{keyp}",
             **_valor_por_defecto(f"dir_{keyp}", ""),
         )
+        ch1, ch2 = st.columns(2)
+        with ch1:
+            habitaciones = st.number_input(
+                "Habitaciones",
+                min_value=1,
+                step=1,
+                key=f"hab_{keyp}",
+                **_valor_por_defecto(f"hab_{keyp}", 1),
+            )
+        with ch2:
+            acomodacion = st.text_input(
+                "Acomodación",
+                placeholder="Ej: Doble Estándar",
+                key=f"acom_{keyp}",
+                **_valor_por_defecto(f"acom_{keyp}", ""),
+            )
         if hotel_nombre.strip():
             desc_def = f"Hotel {hotel_nombre.strip()} Todo Incluido"
         desc = _desc_hotel(keyp, hotel_nombre, desc_def)
@@ -278,6 +296,8 @@ def fila_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
         "etiqueta": etiqueta,
         "desc": desc.strip(),
         "direccion": direccion.strip(),
+        "habitaciones": int(habitaciones),
+        "acomodacion": acomodacion.strip(),
         "monto": monto_cop,
         "comision": int(comision),
         "comision_tipo": comision_tipo,
@@ -297,9 +317,13 @@ def _leer_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
         else:
             desc = f"Hotel {hotel_nombre.strip()}: {plan}" if hotel_nombre.strip() else plan
         direccion = (st.session_state.get(f"dir_{keyp}", "") or "").strip()
+        habitaciones = int(st.session_state.get(f"hab_{keyp}", 1) or 1)
+        acomodacion = (st.session_state.get(f"acom_{keyp}", "") or "").strip()
     else:
         desc = (st.session_state.get(f"desc_{keyp}", desc_def) or "").strip()
         direccion = ""
+        habitaciones = 1
+        acomodacion = ""
 
     if st.session_state.get(f"yatc_{keyp}", False):
         comision, comision_tipo, comision_valor = 0, "ninguna", 0.0
@@ -319,6 +343,8 @@ def _leer_servicio(clave, etiqueta, desc_def, keyp, hotel_nombre=""):
         "etiqueta": etiqueta,
         "desc": desc,
         "direccion": direccion,
+        "habitaciones": habitaciones,
+        "acomodacion": acomodacion,
         "monto": monto_cop,
         "comision": comision,
         "comision_tipo": comision_tipo,
@@ -544,6 +570,18 @@ def _reconstruir_opciones(compartir, serv_comp, imgs_vuelos_compartidas):
             (s["direccion"] for s in servicios if s["clave"] == "hotel" and s.get("direccion")),
             "",
         )
+        hotel_habitaciones = next(
+            (
+                s.get("habitaciones")
+                for s in servicios
+                if s["clave"] == "hotel" and s.get("habitaciones")
+            ),
+            None,
+        )
+        hotel_acomodacion = next(
+            (s["acomodacion"] for s in servicios if s["clave"] == "hotel" and s.get("acomodacion")),
+            "",
+        )
         moneda_salida = st.session_state.get("moneda_salida", "COP")
         trm_actual = st.session_state.get("trm_manual")
         servicios_mostrar = [
@@ -560,6 +598,8 @@ def _reconstruir_opciones(compartir, serv_comp, imgs_vuelos_compartidas):
                 "nombre": nombre,
                 "hotel": hotel,
                 "hotel_direccion": hotel_direccion,
+                "hotel_habitaciones": hotel_habitaciones,
+                "hotel_acomodacion": hotel_acomodacion,
                 "ida": ida,
                 "regreso": reg,
                 "dias": dias,
@@ -1039,6 +1079,8 @@ def _preset_servicio(keyp, s, desc_def):
 
     if s.get("clave") == "hotel":
         st.session_state[f"dir_{keyp}"] = s.get("direccion") or ""
+        st.session_state[f"hab_{keyp}"] = int(s.get("habitaciones") or 1)
+        st.session_state[f"acom_{keyp}"] = s.get("acomodacion") or ""
         desc_guardado = s.get("desc") or desc_def
         # Si el texto guardado coincide con uno de los planes comerciales
         # (con o sin el prefijo "Hotel X: " delante), se restaura ese plan

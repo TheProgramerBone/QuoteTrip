@@ -8,7 +8,7 @@
     "tamano": "A4",
     "orientacion": "vertical",
     "margen_sup_cm": 3.1,
-    "margen_inf_cm": 2.9,
+    "margen_inf_cm": 4.3,
     "margen_izq_cm": 2.2,
     "margen_der_cm": 2.2
   },
@@ -25,7 +25,8 @@
     "logo_alto_cm": 2.0,
     "logo_posicion": "izquierda",
     "lineas_derecha": ["razon_social", "nit", "rnt"],
-    "mostrar_linea_separadora": true
+    "mostrar_linea_separadora": true,
+    "color_razon_social": "primario"
   },
   "pie": {
     "lineas": ["ciudad", "telefonos", "contacto"],
@@ -35,13 +36,27 @@
     {"tipo": "fecha", "visible": true, "estilo": {}, "opciones": {}},
     {"tipo": "titulo", "visible": true, "estilo": {}, "opciones": {}},
     {"tipo": "etiqueta_opcion", "visible": true, "estilo": {}, "opciones": {}},
-    {"tipo": "pasajeros", "visible": true, "estilo": {}, "opciones": {}},
-    {"tipo": "hotel_fechas", "visible": true, "estilo": {}, "opciones": {}},
+    {"tipo": "pasajeros", "visible": false, "estilo": {}, "opciones": {}},
+    {"tipo": "hotel_fechas", "visible": true, "estilo": {}, "opciones": {"foto_lateral": true}},
+    {
+      "tipo": "anexos",
+      "visible": true,
+      "estilo": {},
+      "opciones": {
+        "incluir_foto_hotel": false,
+        "mostrar_titulo": false,
+        "alto_max_imagen_cm": 6.5
+      }
+    },
     {"tipo": "precios", "visible": true, "estilo": {}, "opciones": {}},
     {"tipo": "servicios", "visible": true, "estilo": {}, "opciones": {"layout": "text"}},
-    {"tipo": "nota_legal", "visible": true, "estilo": {}, "opciones": {}},
-    {"tipo": "firma", "visible": true, "estilo": {}, "opciones": {}},
-    {"tipo": "anexos", "visible": true, "estilo": {}, "opciones": {}}
+    {
+      "tipo": "nota_legal",
+      "visible": true,
+      "estilo": {"espacio_despues_cm": 0.15},
+      "opciones": {}
+    },
+    {"tipo": "firma", "visible": true, "estilo": {}, "opciones": {}}
   ],
   "creado_en": null,
   "actualizado_en": null

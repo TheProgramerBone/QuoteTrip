@@ -51,12 +51,21 @@ def pantalla_registro():
             razon_social = st.text_input("Razón social *", placeholder="Ej: Viajes Ejemplo S.A.S.")
             nit = st.text_input("NIT *", placeholder="Ej: NIT 900.123.456-7")
             rnt = st.text_input("RNT (opcional)", placeholder="Ej: RNT Nº 12345")
-            ciudad = st.text_input("Ciudad *", placeholder="Ej: Floridablanca – Colombia")
+            ciudad = st.text_area(
+                "Ciudad / dirección *",
+                placeholder="Ej: Floridablanca – Colombia\nCalle 1 # 2-34, Oficina 5",
+                height=68,
+            )
         with c2:
-            telefonos = st.text_input("Teléfonos *", placeholder="Ej: Teléfonos: +57 3xx xxx xxxx")
-            contacto = st.text_input(
-                "Contacto (email / web) *",
-                placeholder="Ej: Email: contacto@agencia.com | www.agencia.com",
+            telefonos = st.text_area(
+                "Teléfonos *",
+                placeholder="Ej: Teléfonos: +57 3xx xxx xxxx\n+1 7xx xxx xxxx",
+                height=68,
+            )
+            contacto = st.text_area(
+                "Contacto (email / web / redes) *",
+                placeholder="Ej: Email: contacto@agencia.com\n@agencia · www.agencia.com",
+                height=68,
             )
             firma_nombre = st.text_input("Nombre de quien firma las cotizaciones *")
             firma_cargo = st.text_input("Cargo *", value="Gerente")
@@ -265,9 +274,11 @@ def panel_editar_cuenta(cuenta: dict):
         razon_social = st.text_input("Razón social", value=cuenta.get("razon_social") or "")
         nit = st.text_input("NIT", value=cuenta.get("nit") or "")
         rnt = st.text_input("RNT (opcional)", value=cuenta.get("rnt") or "")
-        ciudad = st.text_input("Ciudad", value=cuenta.get("ciudad") or "")
-        telefonos = st.text_input("Teléfonos", value=cuenta.get("telefonos") or "")
-        contacto = st.text_input("Contacto (email / web)", value=cuenta.get("contacto") or "")
+        ciudad = st.text_area("Ciudad / dirección", value=cuenta.get("ciudad") or "", height=68)
+        telefonos = st.text_area("Teléfonos", value=cuenta.get("telefonos") or "", height=68)
+        contacto = st.text_area(
+            "Contacto (email / web / redes)", value=cuenta.get("contacto") or "", height=68
+        )
         firma_nombre = st.text_input(
             "Nombre de quien firma", value=cuenta.get("firma_nombre") or ""
         )

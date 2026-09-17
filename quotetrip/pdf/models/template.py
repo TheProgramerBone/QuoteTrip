@@ -74,6 +74,7 @@ FUENTE_POR_DEFECTO = "helvetica"
 TAMANOS_PAGINA = ("A4", "Carta")
 ORIENTACIONES = ("vertical", "horizontal")
 POSICIONES_LOGO = ("izquierda", "centro", "derecha")
+COLORES_RAZON_SOCIAL = ("secundario", "primario")
 ALINEACIONES = ("izquierda", "centro", "derecha")
 PESOS = ("normal", "bold")
 LAYOUTS_SERVICIOS = ("text", "table")
@@ -159,6 +160,11 @@ class EncabezadoConfig:
     logo_posicion: str = "izquierda"
     lineas_derecha: list[str] = field(default_factory=lambda: ["razon_social", "nit", "rnt"])
     mostrar_linea_separadora: bool = True
+    # Color de la línea principal (razón social) del bloque de cuenta:
+    # "secundario" (comportamiento histórico) o "primario". Default
+    # deliberadamente "secundario" para no alterar el aspecto de ninguna
+    # plantilla existente — solo "Clásica" lo fija a "primario".
+    color_razon_social: str = "secundario"
 
 
 @dataclass
@@ -459,6 +465,11 @@ def validar_plantilla(template: TemplateDefinition) -> list[str]:
         avisos.append("Tamaño del logo fuera de rango; se ajustó.")
     if e.logo_posicion not in POSICIONES_LOGO:
         e.logo_posicion = "izquierda"
+    if e.color_razon_social not in COLORES_RAZON_SOCIAL:
+        avisos.append(
+            f"Color de razón social «{e.color_razon_social}» no reconocido; se usa secundario."
+        )
+        e.color_razon_social = "secundario"
 
     # --- Secciones: tipos válidos, sin duplicados, bloqueadas siempre visibles ---
     tipos_vistos: set[str] = set()

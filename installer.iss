@@ -9,7 +9,7 @@
 ; ===========================================================================
 
 #define MyAppName "QuoteTrip"
-#define MyAppVersion "1.4.9"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "QuoteTrip"
 #define MyAppExeName "QuoteTrip.exe"
 

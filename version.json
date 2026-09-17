@@ -1,7 +1,7 @@
 {
-  "version": "1.4.8",
+  "version": "1.4.9",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
   "sha256": "",
-  "notas": "Editor de plantillas: pantalla completa de verdad (ya no se veía la barra lateral) con un layout de 3 paneles tipo Canva — Diseño/Capas/Insertar a la izquierda, vista previa grande con zoom en el centro, y las propiedades del elemento seleccionado a la derecha."
+  "notas": "Ahora se puede pegar una captura de pantalla directamente (Ctrl+V) en la foto del hotel y en las capturas de itinerarios de vuelos, sin tener que guardarla primero como archivo."
 }

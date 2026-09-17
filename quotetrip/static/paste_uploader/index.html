@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #fafafa;
+    --bg-hover: #f0f6ff;
+    --border: #b0b0b0;
+    --border-hover: #4c8bf5;
+    --text: #555555;
+    --link: #4c8bf5;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: "Source Sans Pro", -apple-system, "Segoe UI", Arial, sans-serif;
+    background: transparent;
+  }
+  #box {
+    box-sizing: border-box;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    min-height: 68px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: text;
+    color: var(--text);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.35;
+    outline: none;
+    background: var(--bg);
+    transition: border-color .15s, background .15s;
+  }
+  #box.dragover {
+    border-color: var(--border-hover);
+    background: var(--bg-hover);
+  }
+  #box img {
+    max-height: 70px;
+    max-width: 100%;
+    border-radius: 4px;
+    display: block;
+  }
+  #row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #browse {
+    color: var(--link);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  #clear {
+    border: none;
+    background: #e74c3c;
+    color: #fff;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="box" tabindex="0" contenteditable="true" spellcheck="false">
+  <div id="hint" contenteditable="false">
+    📋 Clic aquí y pega una captura (Ctrl+V), arrástrala,
+    o <span id="browse">selecciona un archivo</span>
+  </div>
+</div>
+<input type="file" id="picker" accept="image/*" style="display:none">
+
+<script>
+(function () {
+  var box = document.getElementById("box");
+  var hint = document.getElementById("hint");
+  var browse = document.getElementById("browse");
+  var picker = document.getElementById("picker");
+  var currentValue = null;
+
+  function post(type, extra) {
+    var msg = Object.assign({ isStreamlitMessage: true, type: type }, extra || {});
+    window.parent.postMessage(msg, "*");
+  }
+
+  function setFrameHeight() {
+    post("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+  }
+
+  function renderPreview(dataUrl) {
+    box.innerHTML = "";
+    if (dataUrl) {
+      var row = document.createElement("div");
+      row.id = "row";
+      row.setAttribute("contenteditable", "false");
+      var img = document.createElement("img");
+      img.src = dataUrl;
+      var btn = document.createElement("button");
+      btn.id = "clear";
+      btn.type = "button";
+      btn.textContent = "Quitar";
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setValue(null);
+      });
+      row.appendChild(img);
+      row.appendChild(btn);
+      box.appendChild(row);
+    } else {
+      box.appendChild(hint);
+    }
+    setFrameHeight();
+  }
+
+  function setValue(dataUrl) {
+    currentValue = dataUrl;
+    renderPreview(dataUrl);
+    post("streamlit:setComponentValue", { value: dataUrl, dataType: "json" });
+  }
+
+  function readFile(file) {
+    if (!file || file.type.indexOf("image/") !== 0) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      setValue(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function tratarPegado(e) {
+    var items = (e.clipboardData || window.clipboardData || {}).items || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].kind === "file" && items[i].type.indexOf("image/") === 0) {
+        e.preventDefault();
+        readFile(items[i].getAsFile());
+        return;
+      }
+    }
+    // No había imagen (ej. texto suelto): igual bloqueamos que se
+    // inserte como contenido editable dentro del recuadro.
+    e.preventDefault();
+  }
+
+  browse.addEventListener("click", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    picker.click();
+  });
+  box.addEventListener("paste", tratarPegado);
+  box.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    box.classList.add("dragover");
+  });
+  box.addEventListener("dragleave", function () {
+    box.classList.remove("dragover");
+  });
+  box.addEventListener("drop", function (e) {
+    e.preventDefault();
+    box.classList.remove("dragover");
+    var files = (e.dataTransfer || {}).files;
+    if (files && files.length) readFile(files[0]);
+  });
+  picker.addEventListener("change", function () {
+    if (picker.files && picker.files.length) readFile(picker.files[0]);
+    picker.value = "";
+  });
+
+  function onMessage(event) {
+    if (!event.data || event.data.type !== "streamlit:render") return;
+    var args = event.data.args || {};
+    var theme = event.data.theme;
+    if (theme) {
+      var root = document.documentElement.style;
+      root.setProperty("--bg", theme.secondaryBackgroundColor || "#fafafa");
+      root.setProperty("--text", theme.textColor || "#555555");
+      root.setProperty("--border", theme.base === "dark" ? "#666666" : "#b0b0b0");
+      root.setProperty("--link", theme.primaryColor || "#4c8bf5");
+      document.body.style.background = "transparent";
+    }
+    if (currentValue === null && args.value) {
+      currentValue = args.value;
+      renderPreview(currentValue);
+    } else {
+      setFrameHeight();
+    }
+  }
+
+  window.addEventListener("message", onMessage);
+  post("streamlit:componentReady", { apiVersion: 1 });
+  setFrameHeight();
+})();
+</script>
+</body>
+</html>

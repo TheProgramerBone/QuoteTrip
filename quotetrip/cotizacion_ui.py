@@ -22,6 +22,7 @@ from .calculos import (
 )
 from .config import CLAVES_COMPARTIBLES, INCLUSIONES, LOG_PATH, logger
 from .db import borrar_historial, guardar_cotizacion, obtener_historial, obtener_plantilla
+from .paste_uploader import bytes_pegados, imagen_pegable
 from .pdf import construir_pdf
 from .pdf.presets import PRESET_POR_DEFECTO, es_preset, obtener_preset
 from .pdf.resolver import listar_plantillas_disponibles, resolver_plantilla
@@ -37,6 +38,35 @@ def _bytes_lista(key):
 def _bytes_uno(key):
     f = st.session_state.get(key)
     return f.getvalue() if f else None
+
+
+def _render_pegar_vuelos(base_key):
+    """Recuadro de "pegar captura de vuelo": a diferencia de la foto del
+    hotel, aquí puede haber varias, así que cada pegado nuevo (distinto del
+    último visto) se va sumando a una lista acumulada en `session_state`
+    en vez de reemplazar la anterior."""
+    pegar_key = f"pegar_{base_key}"
+    lista_key = f"{pegar_key}__lista"
+    visto_key = f"{pegar_key}__visto"
+    lista = st.session_state.setdefault(lista_key, [])
+    nueva = imagen_pegable(pegar_key)
+    if nueva is not None and nueva != st.session_state.get(visto_key):
+        lista.append(nueva)
+        st.session_state[visto_key] = nueva
+    if lista:
+        st.caption(f"{len(lista)} captura{'s' if len(lista) != 1 else ''} pegada(s):")
+        cols = st.columns(min(len(lista), 6))
+        for idx, img in enumerate(lista):
+            cols[idx % len(cols)].image(img, use_container_width=True)
+        if st.button("🗑 Vaciar capturas pegadas", key=f"{pegar_key}_vaciar"):
+            st.session_state[lista_key] = []
+            st.session_state[visto_key] = None
+            st.rerun()
+
+
+def _pegadas_vuelo(base_key):
+    """Relee (sin renderizar) las capturas ya pegadas para `base_key`."""
+    return list(st.session_state.get(f"pegar_{base_key}__lista", []))
 
 
 def _valor_por_defecto(key, valor_def):
@@ -147,7 +177,8 @@ def render_tab_cotizacion(
                 key="upv_shared",
                 label_visibility="collapsed",
             )
-        imgs_vuelos_compartidas = _bytes_lista("upv_shared")
+            _render_pegar_vuelos("upv_shared")
+        imgs_vuelos_compartidas = _bytes_lista("upv_shared") + _pegadas_vuelo("upv_shared")
     else:
         imgs_vuelos_compartidas = []
 
@@ -285,6 +316,7 @@ def render_tab_cotizacion(
                 accept_multiple_files=False,
                 key=f"uph_{oid}",
             )
+            imagen_pegable(f"pegar_uph_{oid}")
 
             # Imágenes de vuelos propias (solo si NO se comparten)
             if not compartir:
@@ -294,6 +326,7 @@ def render_tab_cotizacion(
                     accept_multiple_files=True,
                     key=f"upv_{oid}",
                 )
+                _render_pegar_vuelos(f"upv_{oid}")
 
             # ----- Cálculo y resumen en vivo de la opción -----
             servicios = servicios_compartidos + servicios_opcion
@@ -401,9 +434,11 @@ def render_tab_cotizacion(
                     )
 
                     imgs_vuelos = (
-                        imgs_vuelos_compartidas if compartir else _bytes_lista(f"upv_{oid}")
+                        imgs_vuelos_compartidas
+                        if compartir
+                        else _bytes_lista(f"upv_{oid}") + _pegadas_vuelo(f"upv_{oid}")
                     )
-                    img_hotel = _bytes_uno(f"uph_{oid}")
+                    img_hotel = _bytes_uno(f"uph_{oid}") or bytes_pegados(f"pegar_uph_{oid}")
 
                     opciones_pdf.append(
                         {

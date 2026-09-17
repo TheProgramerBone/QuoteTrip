@@ -121,6 +121,10 @@ def _asegurar_columnas_cuenta():
         # exportar. NULL = usar el preset "Clásica" (no requiere fila en
         # `plantillas`, ver `_asegurar_tabla_plantillas`).
         ("plantilla_predeterminada_id", "TEXT"),
+        # Carpeta donde guardar el PDF sin preguntar cada vez (ver
+        # quotetrip/exportar.py). NULL/vacío = preguntar siempre con el
+        # diálogo nativo de "Guardar como".
+        ("carpeta_exportacion", "TEXT"),
     ]
     with _conectar() as con:
         existentes = {r[1] for r in con.execute("PRAGMA table_info(cuenta)")}
@@ -252,6 +256,13 @@ def obtener_historial():
 def borrar_historial():
     with _conectar() as con:
         con.execute("DELETE FROM cotizaciones")
+
+
+def borrar_cotizacion(id_: int):
+    """Borra una sola cotización del historial (p.ej. la versión anterior de
+    una que se acaba de recotizar y volver a exportar)."""
+    with _conectar() as con:
+        con.execute("DELETE FROM cotizaciones WHERE id = ?", (int(id_),))
 
 
 # ----------------------------------------------------------------------

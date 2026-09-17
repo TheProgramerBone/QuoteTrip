@@ -156,6 +156,17 @@ INCLUSIONES = [
 # Servicios que se pueden compartir entre todas las opciones
 CLAVES_COMPARTIBLES = {"vuelos", "traslados"}
 
+# --- Planes comerciales de hotel (para el campo "Incluye:") ---
+PERSONALIZADO = "Personalizado"
+PLANES_HOTEL = [
+    "Solo Hospedaje",
+    "Desayuno",
+    "Desayuno y Almuerzo",
+    "Desayuno, Almuerzo y Cena",
+    "Todo Incluido",
+    PERSONALIZADO,
+]
+
 MESES_ES = [
     "enero",
     "febrero",

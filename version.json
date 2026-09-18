@@ -1,7 +1,6 @@
 {
-  "version": "1.5.2",
-  "tipo": "parche",
-  "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
-  "sha256": "f3c1abbbcdc157cfbb2b3c4b13c1059139d98da707f5bdeea7bcbd51a4b5a4f5",
-  "notas": "Plantilla Clásica más fiel al diseño original en tres detalles de legibilidad: el título \"COTIZACIÓN\" ahora va subrayado además de en negrita, la etiqueta \"Incluye:\" se resalta en negrita/subrayado con el resto de la línea en el color secundario de la cuenta (antes todo en texto plano), y la etiqueta \"Nota:\" del aviso legal ahora va en negrita."
+  "version": "1.6.0",
+  "tipo": "completo",
+  "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Setup.exe",
+  "notas": "Corrige que el 'Valor total' del grupo no se actualizaba al activar/cambiar el redondeo si ya habías tocado 'Ajustar manualmente el valor final' (quedaba con el número de antes del redondeo). El redondeo y su modo ahora se guardan por cuenta y se mantienen al cerrar y abrir la app. El tema Claro/Oscuro de la ventana (y cualquier otra preferencia del navegador embebido) también sobrevive a cerrar y abrir la app — antes se borraba siempre por el modo privado de la ventana de escritorio."
 }

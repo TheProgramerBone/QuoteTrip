@@ -207,7 +207,15 @@ def main():
         import webview
 
         webview.create_window(TITULO, url, width=1250, height=880)
-        webview.start()  # bloquea hasta que se cierra la ventana
+        # private_mode=True es el default de pywebview y BORRA el perfil de
+        # WebView2 (cookies/localStorage) al cerrar la ventana — por eso el
+        # tema Claro/Oscuro que Streamlit guarda en localStorage del navegador
+        # no sobrevivía a cerrar y volver a abrir la app. storage_path fija
+        # el perfil a una carpeta persistente en vez del temporal por defecto.
+        webview.start(
+            private_mode=False,
+            storage_path=str(_dir_datos() / "webview_profile"),
+        )  # bloquea hasta que se cierra la ventana
     except Exception:
         import webbrowser
 

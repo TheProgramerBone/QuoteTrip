@@ -28,8 +28,12 @@ from quotetrip.config import (
     buscar_actualizacion,
     ruta_logo_cuenta,
 )
-from quotetrip.cotizacion_ui import render_tab_cotizacion, render_tab_historial
-from quotetrip.db import init_db, obtener_cuenta
+from quotetrip.cotizacion_ui import (
+    limpiar_ajustes_manuales,
+    render_tab_cotizacion,
+    render_tab_historial,
+)
+from quotetrip.db import actualizar_cuenta, init_db, obtener_cuenta
 from quotetrip.plantillas_ui import (
     esta_editando_plantilla,
     render_editor_plantilla,
@@ -164,13 +168,41 @@ with st.sidebar:
                 st.rerun()
 
         st.divider()
-        st.session_state.setdefault("redondear", False)
-        redondear = st.checkbox("Redondear el valor final por pasajero", key="redondear")
+
+        def _guardar_ajustes_redondeo():
+            """on_change del checkbox y del radio de abajo: persiste la
+            preferencia en la cuenta (sobrevive a cerrar y abrir la app, en
+            vez de resetearse a "desactivado" en cada sesión nueva) y limpia
+            los overrides de "Valor final" que hubieran quedado con el
+            número de ANTES del cambio — ver `limpiar_ajustes_manuales`."""
+            modo_ui = st.session_state.get("modo_redondeo_ui", "Hacia arriba (10.000 más cercano)")
+            modo_valor = "arriba_10k" if modo_ui.startswith("Hacia arriba") else "psicologico_999"
+            actualizar_cuenta(
+                {
+                    "redondear_defecto": 1 if st.session_state.get("redondear") else 0,
+                    "modo_redondeo_defecto": modo_valor,
+                }
+            )
+            limpiar_ajustes_manuales()
+
+        st.session_state.setdefault("redondear", bool(cuenta.get("redondear_defecto")))
+        redondear = st.checkbox(
+            "Redondear el valor final por pasajero",
+            key="redondear",
+            on_change=_guardar_ajustes_redondeo,
+        )
         if redondear:
+            _modo_guardado_texto = (
+                "Precio comercial (terminado en 999)"
+                if cuenta.get("modo_redondeo_defecto") == "psicologico_999"
+                else "Hacia arriba (10.000 más cercano)"
+            )
+            st.session_state.setdefault("modo_redondeo_ui", _modo_guardado_texto)
             modo_ui = st.radio(
                 "Modo de redondeo",
                 ["Hacia arriba (10.000 más cercano)", "Precio comercial (terminado en 999)"],
                 key="modo_redondeo_ui",
+                on_change=_guardar_ajustes_redondeo,
             )
             # "modo_redondeo_valor" no es la key de ningún widget (solo el
             # radio de arriba lo es) — se puede reescribir libremente en

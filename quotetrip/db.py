@@ -125,6 +125,11 @@ def _asegurar_columnas_cuenta():
         # quotetrip/exportar.py). NULL/vacío = preguntar siempre con el
         # diálogo nativo de "Guardar como".
         ("carpeta_exportacion", "TEXT"),
+        # Preferencia de redondeo (checkbox "Redondear el valor final por
+        # pasajero" + su modo), para que sobreviva a cerrar y abrir la app
+        # en vez de resetearse a "desactivado" en cada sesión nueva.
+        ("redondear_defecto", "INTEGER DEFAULT 0"),
+        ("modo_redondeo_defecto", "TEXT"),
     ]
     with _conectar() as con:
         existentes = {r[1] for r in con.execute("PRAGMA table_info(cuenta)")}

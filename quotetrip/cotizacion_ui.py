@@ -124,6 +124,23 @@ def _moneda_entrada():
     return st.session_state.get("moneda_entrada", "COP")
 
 
+def limpiar_ajustes_manuales():
+    """Callback (on_change) del checkbox "redondear" y del radio de modo en
+    el sidebar. Bug: el campo "Valor final" de 'Ajustar manualmente el valor
+    final' (`ajuste_{oid}`) solo recibe su `value=` por defecto la PRIMERA
+    vez, vía `_valor_por_defecto` — una vez que session_state ya tiene la
+    key, queda "pegado" a ese número. Si el redondeo se activa/cambia
+    DESPUÉS de que ese campo ya tenía un valor, `_aplicar_ajuste_manual`
+    sigue usando el número viejo (pre-redondeo) para el total del grupo,
+    así que había que abrir "Ajustar manualmente" y volver a teclearlo a
+    mano para que se actualizara. Se limpia aquí (nunca `ajuste_on_*`, el
+    checkbox que activa el modo — solo el número tecleado) para que el
+    widget se re-cree con el valor recién calculado en el mismo rerun."""
+    for k in list(st.session_state.keys()):
+        if k.startswith("ajuste_") and not k.startswith("ajuste_on_"):
+            del st.session_state[k]
+
+
 def _a_cop(valor):
     """Convierte un número tal como se escribió en el formulario (en la
     moneda de entrada elegida en la barra lateral) a COP, la moneda interna

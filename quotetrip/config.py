@@ -75,7 +75,7 @@ def ruta_logo_cuenta(cuenta: dict) -> str | None:
 
 
 # --- Versión y actualizaciones ---
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 # Para habilitar el aviso de actualización, apunta esta URL a un archivo
 # version.json publicado (por ejemplo en GitHub Releases). Déjalo vacío para
 # desactivar la comprobación. Ver "README Actualizaciones.md".
@@ -137,7 +137,7 @@ def buscar_actualizacion(version_actual: str, url: str, timeout: int = 6):
 # --- Bloques de texto fijos (no son branding de una empresa) ---
 # Cláusula legal exigida a agencias de turismo en Colombia (ley 679/2001).
 NOTA_Y_LEGAL = (
-    "Nota: El presente presupuesto no es válido para intercambiar por los "
+    "<b>Nota:</b> El presente presupuesto no es válido para intercambiar por los "
     "servicios descritos. Todos los servicios están sujetos a disponibilidad "
     "y re-cotización a las tarifas vigentes. Es nuestro deber informar a todos "
     "nuestros usuarios y clientes el Artículo 17 de la ley 679/2001: La "

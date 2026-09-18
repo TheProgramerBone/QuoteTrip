@@ -1,7 +1,7 @@
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "tipo": "parche",
   "url": "https://github.com/TheProgramerBone/QuoteTrip/releases/latest/download/QuoteTrip-Patch.zip",
-  "sha256": "52c0dd734f28288f653974dad64b65d7d64fd5465a21e66a63e8354445d6cb41",
-  "notas": "Plantilla Clásica, más fiel al diseño original: la foto del hotel va junto al texto (antes salía en una página aparte al final), el bloque de hotel muestra nombre y acomodación en color secundario, dirección, cantidad de habitaciones (nuevo campo) fusionada con los pasajeros, y noches en su propia línea. La captura del itinerario de vuelos ahora va justo debajo del bloque de hotel (antes de precio/incluye/nota), sin el rótulo \"Anexos\", y la firma vuelve a ser lo último — todo pensado para que cada opción quepa en una sola página. Pie de página admite varias líneas por campo (para el bloque completo de contacto: oficinas, teléfonos, email, redes). NIT y RNT llevan su etiqueta en el encabezado, y el nombre de la empresa usa el color primario de la cuenta en vez del secundario."
+  "sha256": "f3c1abbbcdc157cfbb2b3c4b13c1059139d98da707f5bdeea7bcbd51a4b5a4f5",
+  "notas": "Plantilla Clásica más fiel al diseño original en tres detalles de legibilidad: el título \"COTIZACIÓN\" ahora va subrayado además de en negrita, la etiqueta \"Incluye:\" se resalta en negrita/subrayado con el resto de la línea en el color secundario de la cuenta (antes todo en texto plano), y la etiqueta \"Nota:\" del aviso legal ahora va en negrita."
 }

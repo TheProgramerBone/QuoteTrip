@@ -12,6 +12,8 @@ Estas funciones asumen que la plantilla ya pasó por
 secciones bloqueadas (`SECCIONES_BLOQUEADAS`) sigan visibles, eso es
 responsabilidad exclusiva de la validación, no del render."""
 
+from xml.sax.saxutils import escape
+
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.units import cm
@@ -29,7 +31,7 @@ def _render_fecha(ctx, cfg):
 
 
 def _render_titulo(ctx, cfg):
-    return [Paragraph("COTIZACIÓN", ctx.estilos["titulo"])]
+    return [Paragraph("<u>COTIZACIÓN</u>", ctx.estilos["titulo"])]
 
 
 def _render_etiqueta_opcion(ctx, cfg):
@@ -207,7 +209,15 @@ def _render_servicios(ctx, cfg):
     # pero no hay lista `servicios` cruda disponible (cotizaciones/
     # plantillas de antes de que ese campo existiera) — nunca rompe el PDF
     # por faltar ese dato, solo se pierde la tabla.
-    return [Paragraph(op.get("incluye", "Incluye: —"), ctx.estilos["servicios"])]
+    texto = op.get("incluye", "Incluye: —")
+    # `calculos.py` siempre antepone "Incluye: " (ver `incluye = "Incluye: "
+    # + ...`) — se resalta esa etiqueta en negrita/subrayado y el resto en
+    # el color secundario, fiel al diseño original (referencias/*.pdf).
+    prefijo = "Incluye: "
+    if texto.startswith(prefijo):
+        resto = escape(texto[len(prefijo) :])
+        texto = f'<u><b>Incluye:</b></u> <font color="{ctx.color_secundario}">{resto}</font>'
+    return [Paragraph(texto, ctx.estilos["servicios"])]
 
 
 def _render_nota_legal(ctx, cfg):
